@@ -21,13 +21,20 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20.18.0
-          registry-url: https://registry.npmjs.org/
 
       - name: Update npm
         run: npm install -g npm@11.9.0
 
       - name: Npm version
         run: npm --version
+
+      - name: Configure npm (OIDC, no tokens)
+        run: |
+          cat > "$RUNNER_TEMP/npmrc" <<'EOF'
+          registry=https://registry.npmjs.org/
+          always-auth=false
+          EOF
+          echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/npmrc" >> "$GITHUB_ENV"
 
       - name: Install
         run: npm ci
