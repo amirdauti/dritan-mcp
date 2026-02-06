@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20.18.0
+          registry-url: https://registry.npmjs.org/
 
       - name: Update npm
         run: npm install -g npm@11.9.0
@@ -28,22 +29,16 @@ jobs:
       - name: Npm version
         run: npm --version
 
-      - name: Configure npm (OIDC trusted publishing)
+      - name: OIDC debug
         run: |
-          # setup-node may create ~/.npmrc with a token placeholder; remove it so
-          # npm can use OIDC trusted publishing (no long-lived tokens).
-          rm -f "$HOME/.npmrc"
-
-          cat > "$RUNNER_TEMP/npmrc" <<'EOF'
-          registry=https://registry.npmjs.org/
-          always-auth=false
-          provenance=true
-          EOF
-
-          echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/npmrc" >> "$GITHUB_ENV"
-          echo "NPM_CONFIG_GLOBALCONFIG=/dev/null" >> "$GITHUB_ENV"
-          echo "NODE_AUTH_TOKEN=" >> "$GITHUB_ENV"
-          echo "NPM_TOKEN=" >> "$GITHUB_ENV"
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:+set}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+set}"
+          echo "GITHUB_WORKFLOW_REF=$GITHUB_WORKFLOW_REF"
+          echo "GITHUB_REF=$GITHUB_REF"
+          echo "NPM_CONFIG_USERCONFIG=${NPM_CONFIG_USERCONFIG:-}"
+          echo "NODE_AUTH_TOKEN=${NODE_AUTH_TOKEN:+set}"
+          echo "NPM_TOKEN=${NPM_TOKEN:+set}"
+          ls -la "$HOME/.npmrc" || true
 
       - name: Install
         run: npm ci
