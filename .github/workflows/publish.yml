@@ -28,13 +28,22 @@ jobs:
       - name: Npm version
         run: npm --version
 
-      - name: Configure npm (OIDC, no tokens)
+      - name: Configure npm (OIDC trusted publishing)
         run: |
+          # setup-node may create ~/.npmrc with a token placeholder; remove it so
+          # npm can use OIDC trusted publishing (no long-lived tokens).
+          rm -f "$HOME/.npmrc"
+
           cat > "$RUNNER_TEMP/npmrc" <<'EOF'
           registry=https://registry.npmjs.org/
           always-auth=false
+          provenance=true
           EOF
+
           echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/npmrc" >> "$GITHUB_ENV"
+          echo "NPM_CONFIG_GLOBALCONFIG=/dev/null" >> "$GITHUB_ENV"
+          echo "NODE_AUTH_TOKEN=" >> "$GITHUB_ENV"
+          echo "NPM_TOKEN=" >> "$GITHUB_ENV"
 
       - name: Install
         run: npm ci
