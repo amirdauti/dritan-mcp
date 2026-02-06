@@ -42,6 +42,9 @@ npm run build && npm start
 - `wallet_get_address`
 - `wallet_get_balance`
 - `market_get_snapshot`
+- `token_get_price`
+- `token_get_risk`
+- `token_get_aggregated`
 - `market_stream_sample`
 - `swap_build`
 - `swap_sign_and_broadcast`

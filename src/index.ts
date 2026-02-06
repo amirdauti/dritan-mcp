@@ -182,6 +182,10 @@ const marketSnapshotSchema = z.object({
   mode: z.enum(["price", "metadata", "risk", "first-buyers", "aggregated"]).default("aggregated"),
 });
 
+const tokenMintSchema = z.object({
+  mint: z.string().min(1),
+});
+
 const marketStreamSampleSchema = z.object({
   dex: z.enum(["pumpamm", "pumpfun", "launchlab", "dlmm", "damm2", "damm1", "dbc"]),
   durationMs: z.number().int().min(500).max(60_000).default(10_000),
@@ -262,6 +266,39 @@ const tools: Tool[] = [
           type: "string",
           enum: ["price", "metadata", "risk", "first-buyers", "aggregated"],
         },
+      },
+    },
+  },
+  {
+    name: "token_get_price",
+    description: "Fetch token price via Dritan (same as market_get_snapshot mode=price).",
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "token_get_risk",
+    description: "Fetch token risk via Dritan (same as market_get_snapshot mode=risk).",
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "token_get_aggregated",
+    description: "Fetch aggregated token data via Dritan (same as market_get_snapshot mode=aggregated).",
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: { type: "string" },
       },
     },
   },
@@ -390,6 +427,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (input.mode === "metadata") return ok(await client.getTokenMetadata(input.mint));
         if (input.mode === "risk") return ok(await client.getTokenRisk(input.mint));
         if (input.mode === "first-buyers") return ok(await client.getFirstBuyers(input.mint));
+        return ok(await client.getTokenAggregated(input.mint));
+      }
+
+      case "token_get_price": {
+        const input = tokenMintSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getTokenPrice(input.mint));
+      }
+
+      case "token_get_risk": {
+        const input = tokenMintSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getTokenRisk(input.mint));
+      }
+
+      case "token_get_aggregated": {
+        const input = tokenMintSchema.parse(args);
+        const client = getDritanClient();
         return ok(await client.getTokenAggregated(input.mint));
       }
 
