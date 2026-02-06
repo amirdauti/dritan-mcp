@@ -18,12 +18,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Use setup-node v4 for npm OIDC Trusted Publishing compatibility.
-      # setup-node v5 may export placeholder auth tokens that break npm publish.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20.18.0
-          registry-url: https://registry.npmjs.org
 
       - name: Update npm
         run: npm install -g npm@11.9.0
@@ -48,18 +45,25 @@ jobs:
           ls -la "$HOME/.npmrc" || true
 
       - name: Install
-        run: npm ci
+        run: |
+          # Avoid auth-related env/config that can break `npm ci` on GitHub runners.
+          unset NPM_CONFIG_USERCONFIG NODE_AUTH_TOKEN NPM_TOKEN
+          npm ci
 
       - name: Lint
-        run: npm run lint
+        run: |
+          unset NPM_CONFIG_USERCONFIG NODE_AUTH_TOKEN NPM_TOKEN
+          npm run lint
 
       - name: Build
-        run: npm run build
+        run: |
+          unset NPM_CONFIG_USERCONFIG NODE_AUTH_TOKEN NPM_TOKEN
+          npm run build
 
       - name: Publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Important: npm OIDC trusted publishing only works when token env vars are NOT set.
-          unset NODE_AUTH_TOKEN NPM_TOKEN
+          unset NPM_CONFIG_USERCONFIG NODE_AUTH_TOKEN NPM_TOKEN
           npm run release
