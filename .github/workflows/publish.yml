@@ -48,7 +48,9 @@ jobs:
         run: |
           # Avoid auth-related env/config that can break `npm ci` on GitHub runners.
           unset NPM_CONFIG_USERCONFIG npm_config_userconfig NODE_AUTH_TOKEN NPM_TOKEN
-          npm ci
+          # `npm ci` has shown inconsistent lockfile validation on GitHub runners for this repo.
+          # `npm install` still respects package-lock.json but is less brittle.
+          npm install --no-audit --no-fund
 
       - name: Lint
         run: |
