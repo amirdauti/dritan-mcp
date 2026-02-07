@@ -1,3 +1,9 @@
+## [0.2.2](https://github.com/amirdauti/dritan-mcp/compare/v0.2.1...v0.2.2) (2026-02-07)
+
+### Bug Fixes
+
+* **ci:** publish to npm using NPM_TOKEN ([3520251](https://github.com/amirdauti/dritan-mcp/commit/35202512bf14e4d94c5bfe788e0f2744b9716e23))
+
 ## [0.2.1](https://github.com/amirdauti/dritan-mcp/compare/v0.2.0...v0.2.1) (2026-02-07)
 
 ### Bug Fixes
