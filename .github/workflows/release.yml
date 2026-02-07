@@ -7,10 +7,12 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: npm-publish
     permissions:
       contents: write
       issues: write
       pull-requests: write
+      id-token: write # npm Trusted Publisher (OIDC)
     steps:
       - uses: actions/checkout@v5
         with:
@@ -19,6 +21,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20.18.0
+          registry-url: https://registry.npmjs.org
 
       - name: Update npm
         run: npm install -g npm@11.9.0
@@ -40,3 +43,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release
 
+      - name: Detect Release Tag
+        id: release_tag
+        run: |
+          tag="$(git tag --points-at HEAD | grep '^v' | head -n1 || true)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to npm (OIDC)
+        if: steps.release_tag.outputs.tag != ''
+        run: |
+          # Ensure we don't accidentally fall back to token-based auth.
+          unset NODE_AUTH_TOKEN NPM_TOKEN
+          npm publish --access public --provenance
