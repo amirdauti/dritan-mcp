@@ -53,5 +53,7 @@ jobs:
         if: steps.release_tag.outputs.tag != ''
         run: |
           # Ensure we don't accidentally fall back to token-based auth.
-          unset NODE_AUTH_TOKEN NPM_TOKEN
+          # (setup-node may create a temp .npmrc and some runners may have auth env vars set)
+          rm -f "${NPM_CONFIG_USERCONFIG:-}" "$HOME/.npmrc" || true
+          unset NPM_CONFIG_USERCONFIG NODE_AUTH_TOKEN NPM_TOKEN
           npm publish --access public --provenance
