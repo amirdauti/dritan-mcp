@@ -1,3 +1,9 @@
+## [0.2.3](https://github.com/amirdauti/dritan-mcp/compare/v0.2.2...v0.2.3) (2026-02-07)
+
+### Bug Fixes
+
+* **ci:** use npm trusted publishing OIDC (no token) ([9bd7dad](https://github.com/amirdauti/dritan-mcp/commit/9bd7dad91ba7b1c0af74235ee9758fd19b79adc9))
+
 ## [0.2.2](https://github.com/amirdauti/dritan-mcp/compare/v0.2.1...v0.2.2) (2026-02-07)
 
 ### Bug Fixes
