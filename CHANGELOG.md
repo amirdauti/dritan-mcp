@@ -1,3 +1,9 @@
+## [0.2.4](https://github.com/amirdauti/dritan-mcp/compare/v0.2.3...v0.2.4) (2026-02-07)
+
+### Bug Fixes
+
+* **ci:** publish from tags via npm trusted publishing ([729332c](https://github.com/amirdauti/dritan-mcp/commit/729332c558a49a2c25f08b2dfae719f0318b1d7a))
+
 ## [0.2.3](https://github.com/amirdauti/dritan-mcp/compare/v0.2.2...v0.2.3) (2026-02-07)
 
 ### Bug Fixes
