@@ -1,3 +1,9 @@
+## [0.2.5](https://github.com/amirdauti/dritan-mcp/compare/v0.2.4...v0.2.5) (2026-02-07)
+
+### Bug Fixes
+
+* **ci:** publish to npm via OIDC in release workflow ([9d20ed3](https://github.com/amirdauti/dritan-mcp/commit/9d20ed32a781beea6a4b3e5d581224cefc1b65a0))
+
 ## [0.2.4](https://github.com/amirdauti/dritan-mcp/compare/v0.2.3...v0.2.4) (2026-02-07)
 
 ### Bug Fixes

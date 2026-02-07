@@ -1,6 +1,6 @@
 {
   "name": "@dritan/mcp",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "license": "MIT",
   "type": "module",
   "description": "MCP server for Dritan SDK market data and local Solana wallet swap execution",
