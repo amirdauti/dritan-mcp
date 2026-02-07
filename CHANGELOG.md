@@ -1,3 +1,9 @@
+## [0.2.1](https://github.com/amirdauti/dritan-mcp/compare/v0.2.0...v0.2.1) (2026-02-07)
+
+### Bug Fixes
+
+* **ci:** avoid npm auth config for OIDC publish ([8477e8f](https://github.com/amirdauti/dritan-mcp/commit/8477e8f271830f396a4a949415c1d4d9be269b63))
+
 ## [0.2.0](https://github.com/amirdauti/dritan-mcp/compare/v0.1.2...v0.2.0) (2026-02-06)
 
 ### Features
