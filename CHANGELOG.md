@@ -1,3 +1,9 @@
+## [0.4.0](https://github.com/amirdauti/dritan-mcp/compare/v0.3.1...v0.4.0) (2026-02-13)
+
+### Features
+
+* add candlestick mode for token ohlcv chart tool ([9424fac](https://github.com/amirdauti/dritan-mcp/commit/9424facab1cb058bec8bd96a6867d530bd38403a))
+
 ## [0.3.1](https://github.com/amirdauti/dritan-mcp/compare/v0.3.0...v0.3.1) (2026-02-13)
 
 ### Bug Fixes
