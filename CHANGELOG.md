@@ -1,3 +1,9 @@
+## [0.6.0](https://github.com/amirdauti/dritan-mcp/compare/v0.5.1...v0.6.0) (2026-02-13)
+
+### Features
+
+* add runtime api key auth tools for no-restart onboarding ([c7d33d7](https://github.com/amirdauti/dritan-mcp/commit/c7d33d7a67ff9413ec978a619da5390a0d79e476))
+
 ## [0.5.1](https://github.com/amirdauti/dritan-mcp/compare/v0.5.0...v0.5.1) (2026-02-13)
 
 ### Bug Fixes
