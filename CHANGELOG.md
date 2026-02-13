@@ -1,3 +1,9 @@
+## [0.3.1](https://github.com/amirdauti/dritan-mcp/compare/v0.3.0...v0.3.1) (2026-02-13)
+
+### Bug Fixes
+
+* pin quickchart to chartjs v4 for ohlcv chart tool ([aef4301](https://github.com/amirdauti/dritan-mcp/commit/aef43014792b26a430fecbdd4387483d05754fcf))
+
 ## [0.3.0](https://github.com/amirdauti/dritan-mcp/compare/v0.2.7...v0.3.0) (2026-02-13)
 
 ### Features
