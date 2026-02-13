@@ -1,3 +1,9 @@
+## [0.3.0](https://github.com/amirdauti/dritan-mcp/compare/v0.2.7...v0.3.0) (2026-02-13)
+
+### Features
+
+* expand MCP tools with token search and chart flow ([2ab1ccd](https://github.com/amirdauti/dritan-mcp/commit/2ab1ccda385c6726a7bfd4df4360afa2d58fd83e))
+
 ## [0.2.7](https://github.com/amirdauti/dritan-mcp/compare/v0.2.6...v0.2.7) (2026-02-07)
 
 ### Bug Fixes
