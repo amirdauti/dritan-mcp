@@ -34,7 +34,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
     "@solana/web3.js": "^1.98.4",
-    "dritan-sdk": "^0.6.0",
+    "dritan-sdk": "^0.9.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

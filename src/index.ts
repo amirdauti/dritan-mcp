@@ -17,10 +17,19 @@ import {
   type KnownDexStream,
   type TokenOhlcvResponse,
 } from "dritan-sdk";
-import { Connection, Keypair, VersionedTransaction, clusterApiUrl } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  VersionedTransaction,
+  clusterApiUrl,
+} from "@solana/web3.js";
 import { z } from "zod";
 
 const DEFAULT_WALLET_DIR = join(homedir(), ".config", "dritan-mcp", "wallets");
+const LAMPORTS_PER_SOL = 1_000_000_000;
 const STREAM_DEXES = [
   "pumpamm",
   "pumpfun",
@@ -45,23 +54,50 @@ const server = new Server(
       tools: {},
     },
     instructions: [
-      "This server requires a DRITAN_API_KEY environment variable to use market data and swap tools.",
-      "Get your API key at https://dritan.dev and configure it:",
+      "This server supports two API-key onboarding options when DRITAN_API_KEY is missing:",
+      "1) x402 pay-per-use key flow: create wallet, receive SOL, create quote, forward payment, claim key.",
+      "2) Free key flow: user creates a free API key at https://dritan.dev.",
+      "After key is obtained, set DRITAN_API_KEY and continue with market/swap tools.",
+      "Suggested setup command:",
       "  claude mcp add dritan-mcp -e DRITAN_API_KEY=<your-key> -- npx @dritan/mcp@latest",
-      "Without the key, only system_check_prereqs and wallet tools (create_local, get_address, get_balance) will work.",
     ].join("\n"),
   },
 );
 
+function getControlBaseUrl(): string {
+  return process.env.DRITAN_CONTROL_BASE_URL ?? "https://api.dritan.dev";
+}
+
+function missingApiKeyError(): Error {
+  return new Error(
+    [
+      "Missing DRITAN_API_KEY in environment.",
+      "Option 1 (paid): use x402 tools (x402_get_pricing, x402_create_api_key_quote, x402_create_api_key) and wallet tools.",
+      "Option 2 (free): create a free key at https://dritan.dev and set DRITAN_API_KEY.",
+    ].join(" "),
+  );
+}
+
 function getDritanClient(): DritanClient {
   const apiKey = process.env.DRITAN_API_KEY;
   if (!apiKey) {
-    throw new Error("Missing DRITAN_API_KEY in environment");
+    throw missingApiKeyError();
   }
 
   return new DritanClient({
     apiKey,
     baseUrl: process.env.DRITAN_BASE_URL,
+    controlBaseUrl: getControlBaseUrl(),
+    wsBaseUrl: process.env.DRITAN_WS_BASE_URL,
+  });
+}
+
+function getX402Client(): DritanClient {
+  return new DritanClient({
+    // x402 endpoints are public; SDK constructor still needs a string.
+    apiKey: process.env.DRITAN_API_KEY ?? "x402_public_endpoints",
+    baseUrl: process.env.DRITAN_BASE_URL,
+    controlBaseUrl: getControlBaseUrl(),
     wsBaseUrl: process.env.DRITAN_WS_BASE_URL,
   });
 }
@@ -90,7 +126,7 @@ async function searchTokens(
   // Backward-compatible fallback for environments where dritan-sdk hasn't been upgraded yet.
   const apiKey = process.env.DRITAN_API_KEY;
   if (!apiKey) {
-    throw new Error("Missing DRITAN_API_KEY in environment");
+    throw missingApiKeyError();
   }
   const baseUrl = process.env.DRITAN_BASE_URL ?? "https://us-east.dritan.dev";
   const url = new URL("/token/search", baseUrl);
@@ -115,6 +151,84 @@ async function searchTokens(
     return JSON.parse(text) as unknown;
   } catch {
     return { ok: true, raw: text };
+  }
+}
+
+type X402QuoteInput = {
+  durationMinutes: number;
+  name?: string;
+  scopes?: string[];
+  payerWallet?: string;
+};
+
+type X402CreateKeyInput = {
+  quoteId: string;
+  paymentTxSignature: string;
+  payerWallet?: string;
+  name?: string;
+  scopes?: string[];
+};
+
+async function x402GetPricing(client: DritanClient): Promise<unknown> {
+  const sdkMethod = (client as unknown as { getX402Pricing?: () => Promise<unknown> }).getX402Pricing;
+  if (typeof sdkMethod === "function") {
+    return await sdkMethod.call(client);
+  }
+
+  const url = new URL("/v1/x402/pricing", getControlBaseUrl());
+  const response = await fetch(url.toString(), { method: "GET" });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`x402 pricing failed (${response.status}): ${text}`);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { raw: text };
+  }
+}
+
+async function x402CreateQuote(client: DritanClient, input: X402QuoteInput): Promise<unknown> {
+  const sdkMethod = (client as unknown as {
+    createX402ApiKeyQuote?: (payload: X402QuoteInput) => Promise<unknown>;
+  }).createX402ApiKeyQuote;
+  if (typeof sdkMethod === "function") {
+    return await sdkMethod.call(client, input);
+  }
+
+  const url = new URL("/v1/x402/api-keys/quote", getControlBaseUrl());
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`x402 quote failed (${response.status}): ${text}`);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { raw: text };
+  }
+}
+
+async function x402CreateApiKey(client: DritanClient, input: X402CreateKeyInput): Promise<unknown> {
+  const sdkMethod = (client as unknown as {
+    createX402ApiKey?: (payload: X402CreateKeyInput) => Promise<unknown>;
+  }).createX402ApiKey;
+  if (typeof sdkMethod === "function") {
+    return await sdkMethod.call(client, input);
+  }
+
+  const url = new URL("/v1/x402/api-keys", getControlBaseUrl());
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`x402 create key failed (${response.status}): ${text}`);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { raw: text };
   }
 }
 
@@ -429,6 +543,34 @@ const walletBalanceSchema = walletPathSchema.extend({
   rpcUrl: z.string().url().optional(),
 });
 
+const walletTransferSchema = z
+  .object({
+    walletPath: z.string().min(1),
+    toAddress: z.string().min(32),
+    lamports: z.number().int().positive().optional(),
+    sol: z.number().positive().optional(),
+    rpcUrl: z.string().url().optional(),
+  })
+  .refine((v) => v.lamports != null || v.sol != null, {
+    message: "Either lamports or sol is required",
+    path: ["lamports"],
+  });
+
+const x402QuoteSchema = z.object({
+  durationMinutes: z.number().int().min(1).max(60 * 24 * 30),
+  name: z.string().min(1).max(120).optional(),
+  scopes: z.array(z.string().min(1).max(120)).max(64).optional(),
+  payerWallet: z.string().min(32).max(80).optional(),
+});
+
+const x402CreateApiKeySchema = z.object({
+  quoteId: z.string().min(1),
+  paymentTxSignature: z.string().min(40),
+  payerWallet: z.string().min(32).max(80).optional(),
+  name: z.string().min(1).max(120).optional(),
+  scopes: z.array(z.string().min(1).max(120)).max(64).optional(),
+});
+
 const marketSnapshotSchema = z.object({
   mint: z.string().min(1),
   mode: z.enum(["price", "metadata", "risk", "first-buyers", "aggregated"]).default("aggregated"),
@@ -566,6 +708,59 @@ const tools: Tool[] = [
       properties: {
         walletPath: { type: "string" },
         rpcUrl: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "wallet_transfer_sol",
+    description: "Send SOL from a local wallet to a destination wallet (used in x402 paid key flow).",
+    inputSchema: {
+      type: "object",
+      required: ["walletPath", "toAddress"],
+      properties: {
+        walletPath: { type: "string" },
+        toAddress: { type: "string" },
+        lamports: { type: "number", description: "Integer lamports to transfer" },
+        sol: { type: "number", description: "SOL amount to transfer (used when lamports is not provided)" },
+        rpcUrl: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "x402_get_pricing",
+    description: "Get x402 pricing and receiver wallet for paid time-limited API keys.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "x402_create_api_key_quote",
+    description:
+      "Create an x402 payment quote for a time-limited API key (returns quoteId, receiverWallet, and exact SOL amount).",
+    inputSchema: {
+      type: "object",
+      required: ["durationMinutes"],
+      properties: {
+        durationMinutes: { type: "number", description: "Minutes for key validity (1 to 43200)." },
+        name: { type: "string", description: "Optional key name." },
+        payerWallet: { type: "string", description: "Optional payer wallet to lock quote payer." },
+        scopes: { type: "array", items: { type: "string" }, description: "Optional scopes." },
+      },
+    },
+  },
+  {
+    name: "x402_create_api_key",
+    description: "Claim a paid x402 API key using quoteId and payment transaction signature.",
+    inputSchema: {
+      type: "object",
+      required: ["quoteId", "paymentTxSignature"],
+      properties: {
+        quoteId: { type: "string" },
+        paymentTxSignature: { type: "string" },
+        payerWallet: { type: "string" },
+        name: { type: "string" },
+        scopes: { type: "array", items: { type: "string" } },
       },
     },
   },
@@ -938,6 +1133,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const apiKeySet = !!process.env.DRITAN_API_KEY;
         return ok({
           ready: solanaCli.ok && apiKeySet,
+          readyForX402Onboarding: solanaCli.ok,
           checks: [
             solanaCli,
             {
@@ -945,11 +1141,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               name: "DRITAN_API_KEY",
               hint: apiKeySet
                 ? "API key is configured."
-                : "Missing DRITAN_API_KEY. Get your key at https://dritan.dev and set it as an environment variable.",
+                : "Missing DRITAN_API_KEY. You can either use x402 onboarding tools or get a free key at https://dritan.dev.",
             },
           ],
           nextAction: !apiKeySet
-            ? "Set DRITAN_API_KEY environment variable. Get your key at https://dritan.dev"
+            ? "Choose one: (1) x402 paid onboarding flow with wallet tools, or (2) get a free key at https://dritan.dev and set DRITAN_API_KEY."
             : !solanaCli.ok
               ? "Install Solana CLI using installHint, then retry wallet_create_local."
               : "Environment ready.",
@@ -986,6 +1182,95 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           lamports,
           sol: lamports / 1_000_000_000,
         });
+      }
+
+      case "wallet_transfer_sol": {
+        const input = walletTransferSchema.parse(args);
+        const walletPath = resolve(input.walletPath);
+        const keypair = loadKeypairFromPath(walletPath);
+        const rpcUrl = getRpcUrl(input.rpcUrl);
+        const conn = new Connection(rpcUrl, "confirmed");
+
+        const lamportsRaw =
+          input.lamports != null ? input.lamports : Math.round((input.sol ?? 0) * LAMPORTS_PER_SOL);
+        if (!Number.isSafeInteger(lamportsRaw) || lamportsRaw <= 0) {
+          throw new Error("Transfer amount must be a positive safe integer number of lamports.");
+        }
+
+        const toPubkey = new PublicKey(input.toAddress);
+        const latest = await conn.getLatestBlockhash("confirmed");
+        const tx = new Transaction({
+          feePayer: keypair.publicKey,
+          recentBlockhash: latest.blockhash,
+        }).add(
+          SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey,
+            lamports: lamportsRaw,
+          }),
+        );
+        tx.sign(keypair);
+
+        const signature = await conn.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          maxRetries: 3,
+        });
+        const confirmation = await conn.confirmTransaction(
+          {
+            signature,
+            blockhash: latest.blockhash,
+            lastValidBlockHeight: latest.lastValidBlockHeight,
+          },
+          "confirmed",
+        );
+        if (confirmation.value.err) {
+          throw new Error(`Transfer failed: ${JSON.stringify(confirmation.value.err)}`);
+        }
+
+        return ok({
+          walletPath,
+          fromAddress: keypair.publicKey.toBase58(),
+          toAddress: toPubkey.toBase58(),
+          rpcUrl,
+          lamports: lamportsRaw,
+          sol: lamportsRaw / LAMPORTS_PER_SOL,
+          signature,
+          explorerUrl: `https://solscan.io/tx/${signature}`,
+        });
+      }
+
+      case "x402_get_pricing": {
+        const client = getX402Client();
+        const pricing = await x402GetPricing(client);
+        return ok({
+          ...((pricing as Record<string, unknown>) ?? {}),
+          onboardingOptions: [
+            "Option 1 (paid x402): create wallet -> receive user SOL -> x402 quote -> forward payment -> claim key.",
+            "Option 2 (free): user gets API key at https://dritan.dev and provides it as DRITAN_API_KEY.",
+          ],
+        });
+      }
+
+      case "x402_create_api_key_quote": {
+        const input = x402QuoteSchema.parse(args);
+        const client = getX402Client();
+        const quote = await x402CreateQuote(client, input);
+        return ok({
+          ...((quote as Record<string, unknown>) ?? {}),
+          nextSteps: [
+            "If user picked paid flow, ensure agent has a local wallet (wallet_create_local + wallet_get_address).",
+            "User funds the agent wallet.",
+            "Transfer quoted SOL amount to receiver wallet using wallet_transfer_sol.",
+            "Claim key with x402_create_api_key using returned tx signature.",
+          ],
+        });
+      }
+
+      case "x402_create_api_key": {
+        const input = x402CreateApiKeySchema.parse(args);
+        const client = getX402Client();
+        const created = await x402CreateApiKey(client, input);
+        return ok(created);
       }
 
       case "market_get_snapshot": {

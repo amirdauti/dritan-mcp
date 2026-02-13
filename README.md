@@ -6,7 +6,8 @@ MCP server for personal agents to use `dritan-sdk` for market data and swap exec
 
 - Node.js 20+
 - `solana-keygen` available in `PATH`
-- Dritan API key (`DRITAN_API_KEY`)
+- Optional: Dritan API key (`DRITAN_API_KEY`) for market/swap tools.
+- For paid onboarding without an existing key, use x402 tools.
 
 ## Setup
 
@@ -41,6 +42,10 @@ npm run build && npm start
 - `wallet_create_local`
 - `wallet_get_address`
 - `wallet_get_balance`
+- `wallet_transfer_sol`
+- `x402_get_pricing`
+- `x402_create_api_key_quote`
+- `x402_create_api_key`
 - `dritan_health`
 - `market_get_snapshot`
 - `token_search`
@@ -74,6 +79,9 @@ npm run build && npm start
 - Wallets default to `~/.config/dritan-mcp/wallets`.
 - Private keys never leave local files; only public address/signature are returned.
 - `swap_sign_and_broadcast` signs locally, then broadcasts via Dritan.
+- Agent onboarding without `DRITAN_API_KEY` should present two options:
+  - Option 1: paid x402 flow (`x402_get_pricing` -> `x402_create_api_key_quote` -> user funds agent wallet -> `wallet_transfer_sol` -> `x402_create_api_key`).
+  - Option 2: user gets a free key at `https://dritan.dev`.
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
 - `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `line-volume`).
 - Ticker workflow for chart requests: `token_search` -> extract mint -> `token_get_ohlcv` or `token_get_ohlcv_chart`.
