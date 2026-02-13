@@ -10,11 +10,30 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { DritanClient, type SwapBuildRequest, type KnownDexStream } from "dritan-sdk";
+import {
+  DritanClient,
+  MeteoraThsClient,
+  type SwapBuildRequest,
+  type KnownDexStream,
+  type TokenOhlcvResponse,
+} from "dritan-sdk";
 import { Connection, Keypair, VersionedTransaction, clusterApiUrl } from "@solana/web3.js";
 import { z } from "zod";
 
 const DEFAULT_WALLET_DIR = join(homedir(), ".config", "dritan-mcp", "wallets");
+const STREAM_DEXES = [
+  "pumpamm",
+  "pumpfun",
+  "launchlab",
+  "dlmm",
+  "damm2",
+  "damm1",
+  "dbc",
+  "amm",
+  "cpmm",
+  "clmm",
+  "orca",
+] as const;
 
 const server = new Server(
   {
@@ -45,6 +64,150 @@ function getDritanClient(): DritanClient {
     baseUrl: process.env.DRITAN_BASE_URL,
     wsBaseUrl: process.env.DRITAN_WS_BASE_URL,
   });
+}
+
+function getThsClient(): MeteoraThsClient {
+  return new MeteoraThsClient({
+    baseUrl: process.env.METEORA_THS_BASE_URL,
+  });
+}
+
+async function searchTokens(
+  client: DritanClient,
+  query: string,
+  options?: { limit?: number; cursor?: string; page?: number },
+): Promise<unknown> {
+  const sdkSearch = (client as unknown as {
+    searchTokens?: (
+      q: string,
+      opts?: { limit?: number; cursor?: string; page?: number },
+    ) => Promise<unknown>;
+  }).searchTokens;
+  if (typeof sdkSearch === "function") {
+    return await sdkSearch(query, options);
+  }
+
+  // Backward-compatible fallback for environments where dritan-sdk hasn't been upgraded yet.
+  const apiKey = process.env.DRITAN_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing DRITAN_API_KEY in environment");
+  }
+  const baseUrl = process.env.DRITAN_BASE_URL ?? "https://us-east.dritan.dev";
+  const url = new URL("/token/search", baseUrl);
+  url.searchParams.set("query", query);
+  if (options?.limit !== undefined) url.searchParams.set("limit", String(options.limit));
+  if (options?.cursor) {
+    url.searchParams.set("cursor", options.cursor);
+  } else if (options?.page !== undefined) {
+    url.searchParams.set("page", String(options.page));
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: { "x-api-key": apiKey },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Token search failed (${response.status}): ${text}`);
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { ok: true, raw: text };
+  }
+}
+
+async function checkDritanHealth(): Promise<{
+  ok: boolean;
+  status: number;
+  url: string;
+  body: string | null;
+}> {
+  const baseUrl = process.env.DRITAN_BASE_URL ?? "https://us-east.dritan.dev";
+  const url = new URL("/health", baseUrl).toString();
+  const apiKey = process.env.DRITAN_API_KEY;
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["x-api-key"] = apiKey;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers,
+  });
+  const body = await response.text().catch(() => null);
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    url,
+    body,
+  };
+}
+
+function toEpochMs(ts: number): number {
+  return ts > 1_000_000_000_000 ? ts : ts * 1000;
+}
+
+function formatChartLabel(ts: number): string {
+  const date = new Date(toEpochMs(ts));
+  if (Number.isNaN(date.getTime())) return String(ts);
+  return date.toISOString().replace("T", " ").slice(0, 16);
+}
+
+function buildOhlcvChartUrl(
+  mint: string,
+  timeframe: string,
+  bars: TokenOhlcvResponse["closed"],
+  width: number,
+  height: number,
+): string {
+  const labels = bars.map((bar) => formatChartLabel(bar.time));
+  const closeSeries = bars.map((bar) => Number(bar.close.toFixed(12)));
+  const volumeSeries = bars.map((bar) => Number(bar.volume.toFixed(12)));
+
+  const config = {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          type: "line",
+          label: "Close",
+          data: closeSeries,
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37,99,235,0.2)",
+          pointRadius: 0,
+          borderWidth: 2,
+          tension: 0.2,
+          yAxisID: "price",
+        },
+        {
+          type: "bar",
+          label: "Volume",
+          data: volumeSeries,
+          backgroundColor: "rgba(16,185,129,0.25)",
+          borderWidth: 0,
+          yAxisID: "volume",
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        legend: { display: true },
+        title: {
+          display: true,
+          text: `${mint} ${timeframe.toUpperCase()} OHLCV`,
+        },
+      },
+      scales: {
+        price: { type: "linear", position: "left" },
+        volume: { type: "linear", position: "right", grid: { drawOnChartArea: false } },
+      },
+    },
+  };
+
+  const encoded = encodeURIComponent(JSON.stringify(config));
+  return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&c=${encoded}`;
 }
 
 function getPlatformInstallHint(binary: "solana-keygen"): { platform: string; install: string[] } {
@@ -192,10 +355,72 @@ const tokenMintSchema = z.object({
   mint: z.string().min(1),
 });
 
+const tokenSearchSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+  cursor: z.string().min(1).optional(),
+  page: z.number().int().min(1).optional(),
+});
+
 const marketStreamSampleSchema = z.object({
-  dex: z.enum(["pumpamm", "pumpfun", "launchlab", "dlmm", "damm2", "damm1", "dbc"]),
+  dex: z.enum(STREAM_DEXES),
   durationMs: z.number().int().min(500).max(60_000).default(10_000),
   maxEvents: z.number().int().min(1).max(250).default(20),
+});
+
+const tokenOhlcvSchema = z.object({
+  mint: z.string().min(1),
+  timeframe: z.string().min(1),
+  timeTo: z.number().int().positive().optional(),
+});
+
+const tokenOhlcvChartSchema = tokenOhlcvSchema.extend({
+  includeActive: z.boolean().default(true),
+  maxPoints: z.number().int().min(10).max(500).default(120),
+  width: z.number().int().min(300).max(2000).default(1200),
+  height: z.number().int().min(200).max(1200).default(600),
+});
+
+const walletAddressSchema = z.object({
+  wallet: z.string().min(1),
+});
+
+const walletPerformanceSchema = walletAddressSchema.extend({
+  showHistoricPnL: z.boolean().optional(),
+  holdingCheck: z.boolean().optional(),
+  hideDetails: z.boolean().optional(),
+});
+
+const walletTokenPerformanceSchema = walletAddressSchema.extend({
+  tokenMint: z.string().min(1),
+});
+
+const walletPortfolioChartSchema = walletAddressSchema.extend({
+  days: z.number().int().min(1).max(3650).optional(),
+});
+
+const walletTradeHistorySchema = walletAddressSchema.extend({
+  cursor: z.string().min(1).optional(),
+});
+
+const walletHoldingsPageSchema = walletAddressSchema.extend({
+  page: z.number().int().min(1),
+});
+
+const walletStreamSampleSchema = z.object({
+  wallets: z.array(z.string().min(1)).min(1).max(100),
+  durationMs: z.number().int().min(500).max(60_000).default(10_000),
+  maxEvents: z.number().int().min(1).max(250).default(20),
+});
+
+const thsScoreSchema = z.object({
+  wallet: z.string().min(1),
+  debug: z.boolean().optional(),
+  breakdown: z.boolean().optional(),
+});
+
+const thsScoreTokensSchema = thsScoreSchema.extend({
+  tokenMints: z.array(z.string().min(1)).min(1).max(200),
 });
 
 const swapBuildSchema = z.object({
@@ -261,6 +486,14 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "dritan_health",
+    description: "Check data plane health endpoint via Dritan SDK.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "market_get_snapshot",
     description: "Fetch token market snapshot via Dritan SDK (price/metadata/risk/first-buyers/aggregated).",
     inputSchema: {
@@ -276,8 +509,34 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "token_search",
+    description:
+      "Search tokens by ticker/name and resolve mint addresses (first step for ticker-based chart requests).",
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "Ticker or token name, e.g. WIF or $WIF" },
+        limit: { type: "number", description: "Optional result limit (1-50)" },
+        cursor: { type: "string", description: "Optional cursor for pagination" },
+        page: { type: "number", description: "Optional page (used when cursor is absent)" },
+      },
+    },
+  },
+  {
     name: "token_get_price",
     description: "Fetch token price via Dritan (same as market_get_snapshot mode=price).",
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "token_get_metadata",
+    description: "Fetch token metadata via Dritan.",
     inputSchema: {
       type: "object",
       required: ["mint"],
@@ -298,6 +557,17 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "token_get_first_buyers",
+    description: "Fetch first buyers via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: { type: "string" },
+      },
+    },
+  },
+  {
     name: "token_get_aggregated",
     description: "Fetch aggregated token data via Dritan (same as market_get_snapshot mode=aggregated).",
     inputSchema: {
@@ -305,6 +575,132 @@ const tools: Tool[] = [
       required: ["mint"],
       properties: {
         mint: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "token_get_deployer_stats",
+    description: "Fetch token deployer stats via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "token_get_ohlcv",
+    description: "Fetch OHLCV candles for a token and timeframe.",
+    inputSchema: {
+      type: "object",
+      required: ["mint", "timeframe"],
+      properties: {
+        mint: { type: "string" },
+        timeframe: { type: "string", description: "e.g. 1m, 5m, 1h, 1d" },
+        timeTo: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "token_get_ohlcv_chart",
+    description:
+      "Build a shareable chart URL from token OHLCV candles so agents can send an actual chart in chat (resolve ticker with token_search first).",
+    inputSchema: {
+      type: "object",
+      required: ["mint", "timeframe"],
+      properties: {
+        mint: { type: "string" },
+        timeframe: { type: "string", description: "e.g. 1m, 5m, 1h, 1d" },
+        timeTo: { type: "number" },
+        includeActive: { type: "boolean" },
+        maxPoints: { type: "number" },
+        width: { type: "number" },
+        height: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_performance",
+    description: "Fetch wallet performance via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        showHistoricPnL: { type: "boolean" },
+        holdingCheck: { type: "boolean" },
+        hideDetails: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_token_performance",
+    description: "Fetch wallet performance for a specific token mint via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet", "tokenMint"],
+      properties: {
+        wallet: { type: "string" },
+        tokenMint: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_portfolio_chart",
+    description: "Fetch wallet portfolio chart series via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        days: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_summary",
+    description: "Fetch basic wallet summary via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_trade_history",
+    description: "Fetch wallet trade history via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        cursor: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_holdings",
+    description: "Fetch wallet holdings via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_holdings_page",
+    description: "Fetch paginated wallet holdings via Dritan.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet", "page"],
+      properties: {
+        wallet: { type: "string" },
+        page: { type: "number" },
       },
     },
   },
@@ -317,10 +713,72 @@ const tools: Tool[] = [
       properties: {
         dex: {
           type: "string",
-          enum: ["pumpamm", "pumpfun", "launchlab", "dlmm", "damm2", "damm1", "dbc"],
+          enum: STREAM_DEXES as unknown as string[],
         },
         durationMs: { type: "number" },
         maxEvents: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "wallet_stream_sample",
+    description: "Open the wallet websocket stream and collect events for selected wallets.",
+    inputSchema: {
+      type: "object",
+      required: ["wallets"],
+      properties: {
+        wallets: { type: "array", items: { type: "string" } },
+        durationMs: { type: "number" },
+        maxEvents: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "ths_health",
+    description: "Check Meteora THS service health.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "ths_get_score",
+    description: "Fetch THS score for a wallet.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        debug: { type: "boolean" },
+        breakdown: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "ths_get_score_tokens_get",
+    description: "Fetch THS score for selected token mints using GET.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet", "tokenMints"],
+      properties: {
+        wallet: { type: "string" },
+        tokenMints: { type: "array", items: { type: "string" } },
+        debug: { type: "boolean" },
+        breakdown: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "ths_get_score_tokens_post",
+    description: "Fetch THS score for selected token mints using POST.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet", "tokenMints"],
+      properties: {
+        wallet: { type: "string" },
+        tokenMints: { type: "array", items: { type: "string" } },
+        debug: { type: "boolean" },
+        breakdown: { type: "boolean" },
       },
     },
   },
@@ -409,6 +867,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
       }
 
+      case "dritan_health": {
+        return ok(await checkDritanHealth());
+      }
+
       case "wallet_create_local": {
         const input = walletCreateSchema.parse(args);
         const walletPath = toWalletPath(input.name, input.walletDir);
@@ -454,16 +916,131 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return ok(await client.getTokenPrice(input.mint));
       }
 
+      case "token_search": {
+        const input = tokenSearchSchema.parse(args);
+        const client = getDritanClient();
+        return ok(
+          await searchTokens(client, input.query, {
+            limit: input.limit,
+            cursor: input.cursor,
+            page: input.page,
+          }),
+        );
+      }
+
+      case "token_get_metadata": {
+        const input = tokenMintSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getTokenMetadata(input.mint));
+      }
+
       case "token_get_risk": {
         const input = tokenMintSchema.parse(args);
         const client = getDritanClient();
         return ok(await client.getTokenRisk(input.mint));
       }
 
+      case "token_get_first_buyers": {
+        const input = tokenMintSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getFirstBuyers(input.mint));
+      }
+
       case "token_get_aggregated": {
         const input = tokenMintSchema.parse(args);
         const client = getDritanClient();
         return ok(await client.getTokenAggregated(input.mint));
+      }
+
+      case "token_get_deployer_stats": {
+        const input = tokenMintSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getDeployerStats(input.mint));
+      }
+
+      case "token_get_ohlcv": {
+        const input = tokenOhlcvSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getTokenOhlcv(input.mint, input.timeframe, { timeTo: input.timeTo }));
+      }
+
+      case "token_get_ohlcv_chart": {
+        const input = tokenOhlcvChartSchema.parse(args);
+        const client = getDritanClient();
+        const ohlcv = await client.getTokenOhlcv(input.mint, input.timeframe, { timeTo: input.timeTo });
+        const bars = [...(ohlcv.closed ?? [])];
+        if (input.includeActive && ohlcv.active) {
+          bars.push(ohlcv.active);
+        }
+        const trimmedBars = bars.slice(-input.maxPoints);
+        if (trimmedBars.length === 0) {
+          throw new Error(`No OHLCV data available for ${input.mint} (${input.timeframe})`);
+        }
+
+        const chartUrl = buildOhlcvChartUrl(
+          input.mint,
+          input.timeframe,
+          trimmedBars,
+          input.width,
+          input.height,
+        );
+
+        return ok({
+          mint: input.mint,
+          timeframe: input.timeframe,
+          points: trimmedBars.length,
+          chartUrl,
+          markdown: `![${input.mint} ${input.timeframe} chart](${chartUrl})`,
+          lastBar: trimmedBars[trimmedBars.length - 1],
+        });
+      }
+
+      case "wallet_get_performance": {
+        const input = walletPerformanceSchema.parse(args);
+        const client = getDritanClient();
+        return ok(
+          await client.getWalletPerformance(input.wallet, {
+            showHistoricPnL: input.showHistoricPnL,
+            holdingCheck: input.holdingCheck,
+            hideDetails: input.hideDetails,
+          }),
+        );
+      }
+
+      case "wallet_get_token_performance": {
+        const input = walletTokenPerformanceSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getWalletTokenPerformance(input.wallet, input.tokenMint));
+      }
+
+      case "wallet_get_portfolio_chart": {
+        const input = walletPortfolioChartSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getWalletPortfolioChart(input.wallet, { days: input.days }));
+      }
+
+      case "wallet_get_summary": {
+        const input = walletAddressSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getBasicWalletInformation(input.wallet));
+      }
+
+      case "wallet_get_trade_history": {
+        const input = walletTradeHistorySchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getWalletTradeHistory(input.wallet, { cursor: input.cursor }));
+      }
+
+      case "wallet_get_holdings": {
+        const input = walletAddressSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getWalletHoldings(input.wallet));
+      }
+
+      case "wallet_get_holdings_page": {
+        const input = walletHoldingsPageSchema.parse(args);
+        const client = getDritanClient();
+        return ok(await client.getWalletHoldingsPage(input.wallet, input.page));
       }
 
       case "market_stream_sample": {
@@ -499,6 +1076,95 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         await done;
         return ok({ dex: input.dex, opened, closed, eventsCaptured: events.length, sample: events });
+      }
+
+      case "wallet_stream_sample": {
+        const input = walletStreamSampleSchema.parse(args);
+        const client = getDritanClient();
+        const events: unknown[] = [];
+        let opened = false;
+        let closed = false;
+
+        const done = new Promise<void>((resolvePromise) => {
+          const handle = client.streamDex("wallet-stream", {
+            onOpen: () => {
+              opened = true;
+              try {
+                (handle.socket as any).send(
+                  JSON.stringify({
+                    method: "subscribeWallets",
+                    wallets: input.wallets,
+                  }),
+                );
+              } catch {
+                // no-op
+              }
+            },
+            onClose: () => {
+              closed = true;
+              resolvePromise();
+            },
+            onMessage: (event: unknown) => {
+              events.push(event);
+              if (events.length >= input.maxEvents) {
+                handle.close();
+              }
+            },
+          });
+
+          setTimeout(() => {
+            if (!closed) {
+              handle.close();
+            }
+          }, input.durationMs);
+        });
+
+        await done;
+        return ok({
+          wallets: input.wallets,
+          opened,
+          closed,
+          eventsCaptured: events.length,
+          sample: events,
+        });
+      }
+
+      case "ths_health": {
+        const ths = getThsClient();
+        return ok({ ok: await ths.health() });
+      }
+
+      case "ths_get_score": {
+        const input = thsScoreSchema.parse(args);
+        const ths = getThsClient();
+        return ok(
+          await ths.getThsScore(input.wallet, {
+            debug: input.debug,
+            breakdown: input.breakdown,
+          }),
+        );
+      }
+
+      case "ths_get_score_tokens_get": {
+        const input = thsScoreTokensSchema.parse(args);
+        const ths = getThsClient();
+        return ok(
+          await ths.getThsScoreForTokens(input.wallet, input.tokenMints, {
+            debug: input.debug,
+            breakdown: input.breakdown,
+          }),
+        );
+      }
+
+      case "ths_get_score_tokens_post": {
+        const input = thsScoreTokensSchema.parse(args);
+        const ths = getThsClient();
+        return ok(
+          await ths.postThsScoreForTokens(input.wallet, input.tokenMints, {
+            debug: input.debug,
+            breakdown: input.breakdown,
+          }),
+        );
       }
 
       case "swap_build": {
