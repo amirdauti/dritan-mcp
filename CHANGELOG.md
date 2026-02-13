@@ -1,3 +1,9 @@
+## [0.5.0](https://github.com/amirdauti/dritan-mcp/compare/v0.4.0...v0.5.0) (2026-02-13)
+
+### Features
+
+* add x402 onboarding tools and two-option api key guidance ([78ec2dc](https://github.com/amirdauti/dritan-mcp/commit/78ec2dc41791e7f62771b29a575da434495601b1))
+
 ## [0.4.0](https://github.com/amirdauti/dritan-mcp/compare/v0.3.1...v0.4.0) (2026-02-13)
 
 ### Features
