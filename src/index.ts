@@ -207,7 +207,9 @@ function buildOhlcvChartUrl(
   };
 
   const encoded = encodeURIComponent(JSON.stringify(config));
-  return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&c=${encoded}`;
+  // QuickChart defaults to Chart.js v2. Our config uses v3+/v4 scale syntax (`options.scales.{id}`),
+  // so pinning `v=4` prevents runtime render errors like "Cannot read properties of undefined (reading 'options')".
+  return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&v=4&c=${encoded}`;
 }
 
 function getPlatformInstallHint(binary: "solana-keygen"): { platform: string; install: string[] } {
