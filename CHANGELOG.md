@@ -1,3 +1,9 @@
+## [0.5.1](https://github.com/amirdauti/dritan-mcp/compare/v0.5.0...v0.5.1) (2026-02-13)
+
+### Bug Fixes
+
+* bind sdk token search method context ([a158d9e](https://github.com/amirdauti/dritan-mcp/commit/a158d9eafa8daf2e07d6fd687a61cfd6e2e60178))
+
 ## [0.5.0](https://github.com/amirdauti/dritan-mcp/compare/v0.4.0...v0.5.0) (2026-02-13)
 
 ### Features
