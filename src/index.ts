@@ -120,7 +120,7 @@ async function searchTokens(
     ) => Promise<unknown>;
   }).searchTokens;
   if (typeof sdkSearch === "function") {
-    return await sdkSearch(query, options);
+    return await sdkSearch.call(client, query, options);
   }
 
   // Backward-compatible fallback for environments where dritan-sdk hasn't been upgraded yet.
