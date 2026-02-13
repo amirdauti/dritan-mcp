@@ -30,6 +30,42 @@ import { z } from "zod";
 
 const DEFAULT_WALLET_DIR = join(homedir(), ".config", "dritan-mcp", "wallets");
 const LAMPORTS_PER_SOL = 1_000_000_000;
+type ApiKeySource = "none" | "env" | "runtime" | "x402";
+function normalizeApiKey(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+function apiKeyPreview(apiKey: string | null): string | null {
+  if (!apiKey) return null;
+  if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}...`;
+  return `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`;
+}
+let runtimeApiKey: string | null = normalizeApiKey(process.env.DRITAN_API_KEY);
+let runtimeApiKeySource: ApiKeySource = runtimeApiKey ? "env" : "none";
+
+function setRuntimeApiKey(apiKey: string, source: Exclude<ApiKeySource, "none" | "env"> | "env"): string {
+  const normalized = normalizeApiKey(apiKey);
+  if (!normalized) {
+    throw new Error("apiKey is required");
+  }
+  runtimeApiKey = normalized;
+  runtimeApiKeySource = source;
+  process.env.DRITAN_API_KEY = normalized;
+  return normalized;
+}
+
+function getActiveApiKey(): string | null {
+  if (runtimeApiKey) return runtimeApiKey;
+  const fromEnv = normalizeApiKey(process.env.DRITAN_API_KEY);
+  if (fromEnv) {
+    runtimeApiKey = fromEnv;
+    runtimeApiKeySource = "env";
+    return fromEnv;
+  }
+  runtimeApiKeySource = "none";
+  return null;
+}
+
 const STREAM_DEXES = [
   "pumpamm",
   "pumpfun",
@@ -57,7 +93,7 @@ const server = new Server(
       "This server supports two API-key onboarding options when DRITAN_API_KEY is missing:",
       "1) x402 pay-per-use key flow: create wallet, receive SOL, create quote, forward payment, claim key.",
       "2) Free key flow: user creates a free API key at https://dritan.dev.",
-      "After key is obtained, set DRITAN_API_KEY and continue with market/swap tools.",
+      "After key is obtained, set it with auth_set_api_key (no restart needed), or restart with DRITAN_API_KEY configured.",
       "Suggested setup command:",
       "  claude mcp add dritan-mcp -e DRITAN_API_KEY=<your-key> -- npx @dritan/mcp@latest",
     ].join("\n"),
@@ -74,12 +110,13 @@ function missingApiKeyError(): Error {
       "Missing DRITAN_API_KEY in environment.",
       "Option 1 (paid): use x402 tools (x402_get_pricing, x402_create_api_key_quote, x402_create_api_key) and wallet tools.",
       "Option 2 (free): create a free key at https://dritan.dev and set DRITAN_API_KEY.",
+      "You can activate a key immediately with auth_set_api_key without restarting MCP.",
     ].join(" "),
   );
 }
 
 function getDritanClient(): DritanClient {
-  const apiKey = process.env.DRITAN_API_KEY;
+  const apiKey = getActiveApiKey();
   if (!apiKey) {
     throw missingApiKeyError();
   }
@@ -95,7 +132,7 @@ function getDritanClient(): DritanClient {
 function getX402Client(): DritanClient {
   return new DritanClient({
     // x402 endpoints are public; SDK constructor still needs a string.
-    apiKey: process.env.DRITAN_API_KEY ?? "x402_public_endpoints",
+    apiKey: getActiveApiKey() ?? "x402_public_endpoints",
     baseUrl: process.env.DRITAN_BASE_URL,
     controlBaseUrl: getControlBaseUrl(),
     wsBaseUrl: process.env.DRITAN_WS_BASE_URL,
@@ -124,7 +161,7 @@ async function searchTokens(
   }
 
   // Backward-compatible fallback for environments where dritan-sdk hasn't been upgraded yet.
-  const apiKey = process.env.DRITAN_API_KEY;
+  const apiKey = getActiveApiKey();
   if (!apiKey) {
     throw missingApiKeyError();
   }
@@ -535,6 +572,10 @@ const walletCreateSchema = z.object({
   walletDir: z.string().min(1).optional(),
 });
 
+const authSetApiKeySchema = z.object({
+  apiKey: z.string().min(8),
+});
+
 const walletPathSchema = z.object({
   walletPath: z.string().min(1),
 });
@@ -675,6 +716,27 @@ const tools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "auth_status",
+    description:
+      "Show current API key status for this MCP session (active source, preview, and onboarding options).",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "auth_set_api_key",
+    description:
+      "Set the active Dritan API key for this running MCP process without restart (runtime session scope).",
+    inputSchema: {
+      type: "object",
+      required: ["apiKey"],
+      properties: {
+        apiKey: { type: "string" },
+      },
     },
   },
   {
@@ -1130,7 +1192,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (request.params.name) {
       case "system_check_prereqs": {
         const solanaCli = checkSolanaCli();
-        const apiKeySet = !!process.env.DRITAN_API_KEY;
+        const activeApiKey = getActiveApiKey();
+        const apiKeySet = !!activeApiKey;
         return ok({
           ready: solanaCli.ok && apiKeySet,
           readyForX402Onboarding: solanaCli.ok,
@@ -1139,6 +1202,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               ok: apiKeySet,
               name: "DRITAN_API_KEY",
+              source: runtimeApiKeySource,
+              preview: apiKeyPreview(activeApiKey),
               hint: apiKeySet
                 ? "API key is configured."
                 : "Missing DRITAN_API_KEY. You can either use x402 onboarding tools or get a free key at https://dritan.dev.",
@@ -1149,6 +1214,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             : !solanaCli.ok
               ? "Install Solana CLI using installHint, then retry wallet_create_local."
               : "Environment ready.",
+        });
+      }
+
+      case "auth_status": {
+        const activeApiKey = getActiveApiKey();
+        return ok({
+          apiKeyConfigured: !!activeApiKey,
+          source: runtimeApiKeySource,
+          preview: apiKeyPreview(activeApiKey),
+          controlBaseUrl: getControlBaseUrl(),
+          onboardingOptions: [
+            "Option 1 (paid x402): create wallet -> receive user SOL -> x402 quote -> transfer -> claim key.",
+            "Option 2 (free): create key at https://dritan.dev and set it with auth_set_api_key.",
+          ],
+        });
+      }
+
+      case "auth_set_api_key": {
+        const input = authSetApiKeySchema.parse(args);
+        const activated = setRuntimeApiKey(input.apiKey, "runtime");
+        return ok({
+          ok: true,
+          message: "API key activated for this MCP session without restart.",
+          source: runtimeApiKeySource,
+          preview: apiKeyPreview(activated),
         });
       }
 
@@ -1261,7 +1351,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             "If user picked paid flow, ensure agent has a local wallet (wallet_create_local + wallet_get_address).",
             "User funds the agent wallet.",
             "Transfer quoted SOL amount to receiver wallet using wallet_transfer_sol.",
-            "Claim key with x402_create_api_key using returned tx signature.",
+            "Claim key with x402_create_api_key using returned tx signature (MCP auto-activates returned apiKey).",
           ],
         });
       }
@@ -1270,7 +1360,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const input = x402CreateApiKeySchema.parse(args);
         const client = getX402Client();
         const created = await x402CreateApiKey(client, input);
-        return ok(created);
+        const payload =
+          typeof created === "object" && created !== null
+            ? { ...(created as Record<string, unknown>) }
+            : ({ value: created } as Record<string, unknown>);
+        if (typeof payload.apiKey === "string") {
+          const activated = setRuntimeApiKey(payload.apiKey, "x402");
+          payload.mcpAuth = {
+            activated: true,
+            source: runtimeApiKeySource,
+            preview: apiKeyPreview(activated),
+            message: "x402-created API key is active for this MCP session (no restart needed).",
+          };
+        }
+        return ok(payload);
       }
 
       case "market_get_snapshot": {
