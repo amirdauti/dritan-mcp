@@ -154,7 +154,9 @@ function formatChartLabel(ts: number): string {
   return date.toISOString().replace("T", " ").slice(0, 16);
 }
 
-function buildOhlcvChartUrl(
+type OhlcvChartType = "line-volume" | "candlestick";
+
+function buildLineVolumeOhlcvChartUrl(
   mint: string,
   timeframe: string,
   bars: TokenOhlcvResponse["closed"],
@@ -210,6 +212,85 @@ function buildOhlcvChartUrl(
   // QuickChart defaults to Chart.js v2. Our config uses v3+/v4 scale syntax (`options.scales.{id}`),
   // so pinning `v=4` prevents runtime render errors like "Cannot read properties of undefined (reading 'options')".
   return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&v=4&c=${encoded}`;
+}
+
+function buildCandlestickOhlcvChartUrl(
+  mint: string,
+  timeframe: string,
+  bars: TokenOhlcvResponse["closed"],
+  width: number,
+  height: number,
+): string {
+  const labels = bars.map((bar) => formatChartLabel(bar.time));
+  const candles = bars.map((bar, index) => ({
+    x: labels[index],
+    o: Number(bar.open.toFixed(12)),
+    h: Number(bar.high.toFixed(12)),
+    l: Number(bar.low.toFixed(12)),
+    c: Number(bar.close.toFixed(12)),
+  }));
+  const volumeSeries = bars.map((bar) => Number(bar.volume.toFixed(12)));
+  const volumeColors = bars.map((bar) =>
+    bar.close >= bar.open ? "rgba(16,185,129,0.25)" : "rgba(239,68,68,0.25)",
+  );
+
+  const config = {
+    type: "candlestick",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "OHLC",
+          data: candles,
+          color: {
+            up: "#10b981",
+            down: "#ef4444",
+            unchanged: "#94a3b8",
+          },
+        },
+        {
+          type: "bar",
+          label: "Volume",
+          data: volumeSeries,
+          backgroundColor: volumeColors,
+          borderWidth: 0,
+          yAxisID: "volume",
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        legend: { display: true },
+        title: {
+          display: true,
+          text: `${mint} ${timeframe.toUpperCase()} Candlestick`,
+        },
+      },
+      scales: {
+        x: { type: "category" },
+        y: { type: "linear", position: "left" },
+        volume: { type: "linear", position: "right", grid: { drawOnChartArea: false } },
+      },
+    },
+  };
+
+  const encoded = encodeURIComponent(JSON.stringify(config));
+  // Pin Chart.js v4 for stable scale behavior and financial chart rendering.
+  return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&v=4&c=${encoded}`;
+}
+
+function buildOhlcvChartUrl(
+  chartType: OhlcvChartType,
+  mint: string,
+  timeframe: string,
+  bars: TokenOhlcvResponse["closed"],
+  width: number,
+  height: number,
+): string {
+  if (chartType === "candlestick") {
+    return buildCandlestickOhlcvChartUrl(mint, timeframe, bars, width, height);
+  }
+  return buildLineVolumeOhlcvChartUrl(mint, timeframe, bars, width, height);
 }
 
 function getPlatformInstallHint(binary: "solana-keygen"): { platform: string; install: string[] } {
@@ -377,6 +458,7 @@ const tokenOhlcvSchema = z.object({
 });
 
 const tokenOhlcvChartSchema = tokenOhlcvSchema.extend({
+  chartType: z.enum(["line-volume", "candlestick"]).default("line-volume"),
   includeActive: z.boolean().default(true),
   maxPoints: z.number().int().min(10).max(500).default(120),
   width: z.number().int().min(300).max(2000).default(1200),
@@ -607,7 +689,7 @@ const tools: Tool[] = [
   {
     name: "token_get_ohlcv_chart",
     description:
-      "Build a shareable chart URL from token OHLCV candles so agents can send an actual chart in chat (resolve ticker with token_search first).",
+      "Build a shareable chart URL from token OHLCV candles so agents can send an actual chart in chat (resolve ticker with token_search first). Supports line-volume or candlestick charts.",
     inputSchema: {
       type: "object",
       required: ["mint", "timeframe"],
@@ -615,6 +697,11 @@ const tools: Tool[] = [
         mint: { type: "string" },
         timeframe: { type: "string", description: "e.g. 1m, 5m, 1h, 1d" },
         timeTo: { type: "number" },
+        chartType: {
+          type: "string",
+          enum: ["line-volume", "candlestick"],
+          description: "Chart style. Default line-volume.",
+        },
         includeActive: { type: "boolean" },
         maxPoints: { type: "number" },
         width: { type: "number" },
@@ -980,6 +1067,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const chartUrl = buildOhlcvChartUrl(
+          input.chartType,
           input.mint,
           input.timeframe,
           trimmedBars,
@@ -990,6 +1078,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return ok({
           mint: input.mint,
           timeframe: input.timeframe,
+          chartType: input.chartType,
           points: trimmedBars.length,
           chartUrl,
           markdown: `![${input.mint} ${input.timeframe} chart](${chartUrl})`,
