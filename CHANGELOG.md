@@ -1,3 +1,9 @@
+## [0.9.0](https://github.com/amirdauti/dritan-mcp/compare/v0.8.0...v0.9.0) (2026-02-14)
+
+### Features
+
+* enforce x402-first api key onboarding guidance ([70b7565](https://github.com/amirdauti/dritan-mcp/commit/70b7565283da90a0546f1eaf3ebfe5ff7769574e))
+
 ## [0.8.0](https://github.com/amirdauti/dritan-mcp/compare/v0.7.0...v0.8.0) (2026-02-14)
 
 ### Features
