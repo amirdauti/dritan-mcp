@@ -15,6 +15,8 @@ import {
   type SwapBuildRequest,
   type KnownDexStream,
   type TokenOhlcvResponse,
+  type WalletHoldingsResponse,
+  type WalletPnlResponse,
 } from "dritan-sdk";
 import {
   Connection,
@@ -197,7 +199,7 @@ function missingApiKeyError(): Error {
 const postAuthCapabilities = [
   "Token intelligence: token search, price, metadata, risk, first buyers, deployer stats.",
   "Charts: OHLCV data and shareable line-volume/candlestick chart URLs.",
-  "Wallet analytics: summary, holdings, trade history, performance, and portfolio charts.",
+  "Wallet analytics: summary, holdings, trade history, performance, plus shareable holdings/portfolio/PnL chart URLs.",
   "Trader discovery: Meteora THS wallet score lookups plus top-wallet leaderboard.",
   "Execution: build/sign/broadcast swaps and monitor wallet/DEX streams.",
 ];
@@ -602,6 +604,424 @@ function buildOhlcvChartConfig(
   return buildLineVolumeOhlcvChartConfig(mint, timeframe, bars);
 }
 
+type ChartUrlInfo = {
+  chartUrl: string;
+  chartUrlType: "short" | "direct";
+};
+
+async function resolveChartUrl(
+  config: Record<string, unknown>,
+  width: number,
+  height: number,
+): Promise<ChartUrlInfo> {
+  const shortChartUrl = await buildQuickChartShortUrl(config, width, height);
+  return {
+    chartUrl: shortChartUrl ?? buildQuickChartDirectUrl(config, width, height),
+    chartUrlType: shortChartUrl ? "short" : "direct",
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function formatCompactNumber(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function colorAt(index: number): string {
+  const palette = [
+    "#2563eb",
+    "#10b981",
+    "#f59e0b",
+    "#ef4444",
+    "#8b5cf6",
+    "#06b6d4",
+    "#84cc16",
+    "#f97316",
+    "#14b8a6",
+    "#e11d48",
+    "#6366f1",
+    "#22c55e",
+  ];
+  return palette[index % palette.length];
+}
+
+type WalletHoldingsSlice = {
+  label: string;
+  mint: string;
+  value: number;
+};
+
+function buildWalletHoldingsSlices(holdings: WalletHoldingsResponse, top: number): WalletHoldingsSlice[] {
+  const slices = (holdings.tokens ?? [])
+    .map((position) => {
+      const value = toFiniteNumber(position.value);
+      if (value == null || value <= 0) return null;
+      const token = asRecord(position.token) ?? {};
+      const symbol = typeof token.symbol === "string" ? token.symbol.trim() : "";
+      const mint =
+        typeof token.mint === "string" && token.mint.trim()
+          ? token.mint
+          : typeof (token as { address?: unknown }).address === "string"
+            ? ((token as { address: string }).address ?? "")
+            : "";
+      const fallbackLabel = mint ? `${mint.slice(0, 4)}...${mint.slice(-4)}` : "Unknown";
+      return {
+        label: symbol || fallbackLabel,
+        mint,
+        value,
+      };
+    })
+    .filter((slice): slice is WalletHoldingsSlice => slice !== null)
+    .sort((a, b) => b.value - a.value);
+
+  const topSlices = slices.slice(0, top);
+  const othersValue = slices.slice(top).reduce((sum, item) => sum + item.value, 0);
+  if (othersValue > 0) {
+    topSlices.push({ label: "Others", mint: "", value: othersValue });
+  }
+  return topSlices;
+}
+
+function buildWalletHoldingsChartConfig(wallet: string, slices: WalletHoldingsSlice[]): Record<string, unknown> {
+  return {
+    type: "doughnut",
+    data: {
+      labels: slices.map((slice) => slice.label),
+      datasets: [
+        {
+          label: "Value",
+          data: slices.map((slice) => Number(slice.value.toFixed(6))),
+          backgroundColor: slices.map((_, index) => colorAt(index)),
+          borderColor: "#0f172a",
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: `${wallet} Holdings Allocation`,
+        },
+        legend: {
+          position: "right",
+        },
+      },
+    },
+  };
+}
+
+type PortfolioPoint = {
+  label: string;
+  value: number;
+  sortTs: number | null;
+};
+
+function toSortTimestamp(label: string): number | null {
+  const asNumber = Number(label);
+  if (Number.isFinite(asNumber) && asNumber > 0) return toEpochMs(asNumber);
+  const asDate = Date.parse(label);
+  return Number.isFinite(asDate) ? asDate : null;
+}
+
+function formatTimeLabel(value: string): string {
+  const sortTs = toSortTimestamp(value);
+  if (sortTs == null) return value;
+  return new Date(sortTs).toISOString().replace("T", " ").slice(0, 16);
+}
+
+function buildPortfolioPoints(history: Record<string, number>, maxPoints: number): PortfolioPoint[] {
+  const entries = Object.entries(history ?? {})
+    .map(([label, raw]) => {
+      const value = toFiniteNumber(raw);
+      if (value == null) return null;
+      return {
+        label,
+        value,
+        sortTs: toSortTimestamp(label),
+      };
+    })
+    .filter((entry): entry is PortfolioPoint => entry !== null);
+
+  entries.sort((a, b) => {
+    if (a.sortTs != null && b.sortTs != null) return a.sortTs - b.sortTs;
+    if (a.sortTs != null) return -1;
+    if (b.sortTs != null) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  return entries.slice(-maxPoints);
+}
+
+function buildWalletPortfolioVisualChartConfig(wallet: string, points: PortfolioPoint[]): Record<string, unknown> {
+  return {
+    type: "line",
+    data: {
+      labels: points.map((point) => formatTimeLabel(point.label)),
+      datasets: [
+        {
+          label: "Portfolio Value",
+          data: points.map((point) => Number(point.value.toFixed(6))),
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37,99,235,0.2)",
+          fill: true,
+          pointRadius: 0,
+          tension: 0.2,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: `${wallet} Portfolio Value`,
+        },
+        legend: { display: true },
+      },
+      scales: {
+        y: {
+          type: "linear",
+          beginAtZero: false,
+        },
+      },
+    },
+  };
+}
+
+type PnlMetric = {
+  label: string;
+  value: number;
+};
+
+function lookupNumberByAliases(
+  record: Record<string, unknown>,
+  aliases: readonly string[],
+): number | null {
+  const lowered = new Map<string, unknown>();
+  for (const [key, value] of Object.entries(record)) {
+    lowered.set(key.toLowerCase(), value);
+  }
+  for (const alias of aliases) {
+    const matched = lowered.get(alias.toLowerCase());
+    const num = toFiniteNumber(matched);
+    if (num != null) return num;
+  }
+  return null;
+}
+
+function extractPnlSummaryMetrics(performance: WalletPnlResponse): PnlMetric[] {
+  const root = asRecord(performance) ?? {};
+  const summary = asRecord(root.summary) ?? {};
+  const source = Object.keys(summary).length > 0 ? summary : root;
+  const metricDefs: Array<{ label: string; aliases: string[] }> = [
+    { label: "Total PnL", aliases: ["totalPnl", "total_pnl", "netPnl", "net_pnl", "pnl"] },
+    { label: "Realized PnL", aliases: ["realizedPnl", "realized_pnl"] },
+    { label: "Unrealized PnL", aliases: ["unrealizedPnl", "unrealized_pnl"] },
+    { label: "Total Profit", aliases: ["totalProfit", "total_profit", "profit", "grossProfit"] },
+    { label: "Total Loss", aliases: ["totalLoss", "total_loss", "loss", "grossLoss"] },
+  ];
+
+  return metricDefs
+    .map(({ label, aliases }) => {
+      const value = lookupNumberByAliases(source, aliases);
+      return value == null ? null : { label, value };
+    })
+    .filter((metric): metric is PnlMetric => metric !== null);
+}
+
+function extractPnlTokenMetrics(performance: WalletPnlResponse, maxTokens: number): PnlMetric[] {
+  const root = asRecord(performance) ?? {};
+  const tokens = asRecord(root.tokens) ?? {};
+  const aliases = [
+    "pnl",
+    "totalPnl",
+    "total_pnl",
+    "realizedPnl",
+    "realized_pnl",
+    "profit",
+    "profitUsd",
+    "profit_usd",
+  ];
+
+  return Object.entries(tokens)
+    .map(([tokenKey, payload]) => {
+      const stats = asRecord(payload) ?? {};
+      const labelFromPayload =
+        typeof stats.symbol === "string" && stats.symbol.trim()
+          ? stats.symbol
+          : typeof stats.name === "string" && stats.name.trim()
+            ? stats.name
+            : tokenKey;
+      const value = lookupNumberByAliases(stats, aliases);
+      return value == null ? null : { label: labelFromPayload, value };
+    })
+    .filter((metric): metric is PnlMetric => metric !== null)
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+    .slice(0, maxTokens);
+}
+
+type HistoryPoint = {
+  label: string;
+  value: number;
+  sortTs: number | null;
+};
+
+function extractHistoryPoints(value: unknown, maxPoints: number): HistoryPoint[] | null {
+  const arrayValue = Array.isArray(value) ? value : null;
+  if (arrayValue) {
+    const points = arrayValue
+      .map((item, index) => {
+        const asNum = toFiniteNumber(item);
+        if (asNum != null) {
+          return { label: String(index + 1), value: asNum, sortTs: index };
+        }
+
+        const row = asRecord(item);
+        if (!row) return null;
+        const pointValue = toFiniteNumber(row.value) ?? toFiniteNumber(row.pnl) ?? toFiniteNumber(row.total);
+        if (pointValue == null) return null;
+        const rawLabel =
+          (typeof row.time === "string" && row.time) ||
+          (typeof row.date === "string" && row.date) ||
+          (typeof row.ts === "string" && row.ts) ||
+          (typeof row.time === "number" && String(row.time)) ||
+          String(index + 1);
+        return {
+          label: rawLabel,
+          value: pointValue,
+          sortTs: toSortTimestamp(rawLabel),
+        };
+      })
+      .filter((point): point is HistoryPoint => point !== null);
+
+    if (points.length >= 2) {
+      points.sort((a, b) => {
+        if (a.sortTs != null && b.sortTs != null) return a.sortTs - b.sortTs;
+        return a.label.localeCompare(b.label);
+      });
+      return points.slice(-maxPoints);
+    }
+  }
+
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const points = Object.entries(record)
+    .map(([label, rawValue]) => {
+      const asNum = toFiniteNumber(rawValue);
+      if (asNum == null) return null;
+      return {
+        label,
+        value: asNum,
+        sortTs: toSortTimestamp(label),
+      };
+    })
+    .filter((point): point is HistoryPoint => point !== null);
+
+  if (points.length < 2) return null;
+  points.sort((a, b) => {
+    if (a.sortTs != null && b.sortTs != null) return a.sortTs - b.sortTs;
+    if (a.sortTs != null) return -1;
+    if (b.sortTs != null) return 1;
+    return a.label.localeCompare(b.label);
+  });
+  return points.slice(-maxPoints);
+}
+
+function extractPnlHistory(performance: WalletPnlResponse, maxPoints: number): HistoryPoint[] | null {
+  const root = asRecord(performance) ?? {};
+  const summary = asRecord(root.summary) ?? {};
+  const candidates = ["historicPnl", "historic_pnl", "historicalPnl", "historical_pnl", "pnlHistory", "history"];
+
+  for (const scope of [root, summary]) {
+    for (const key of candidates) {
+      const history = extractHistoryPoints(scope[key], maxPoints);
+      if (history && history.length >= 2) return history;
+    }
+  }
+  return null;
+}
+
+function buildWalletPnlHistoryChartConfig(wallet: string, points: HistoryPoint[]): Record<string, unknown> {
+  return {
+    type: "line",
+    data: {
+      labels: points.map((point) => formatTimeLabel(point.label)),
+      datasets: [
+        {
+          label: "PnL",
+          data: points.map((point) => Number(point.value.toFixed(6))),
+          borderColor: "#16a34a",
+          backgroundColor: "rgba(22,163,74,0.2)",
+          fill: true,
+          pointRadius: 0,
+          tension: 0.2,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        title: { display: true, text: `${wallet} PnL History` },
+      },
+      scales: {
+        y: { type: "linear", beginAtZero: false },
+      },
+    },
+  };
+}
+
+function buildWalletPnlMetricChartConfig(
+  wallet: string,
+  metrics: PnlMetric[],
+  title: string,
+): Record<string, unknown> {
+  return {
+    type: "bar",
+    data: {
+      labels: metrics.map((metric) => metric.label),
+      datasets: [
+        {
+          label: "Value",
+          data: metrics.map((metric) => Number(metric.value.toFixed(6))),
+          backgroundColor: metrics.map((metric, index) =>
+            metric.value >= 0 ? `rgba(16,185,129,${0.25 + (index % 3) * 0.1})` : "rgba(239,68,68,0.35)",
+          ),
+          borderColor: metrics.map((metric) => (metric.value >= 0 ? "#059669" : "#dc2626")),
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      indexAxis: metrics.length > 8 ? "y" : "x",
+      plugins: {
+        title: { display: true, text: `${wallet} ${title}` },
+        legend: { display: false },
+      },
+      scales: {
+        y: { beginAtZero: false },
+      },
+    },
+  };
+}
+
 function getPlatformInstallHint(binary: "solana-keygen"): { platform: string; install: string[] } {
   switch (process.platform) {
     case "darwin":
@@ -838,12 +1258,34 @@ const walletPortfolioChartSchema = walletAddressSchema.extend({
   days: z.number().int().min(1).max(3650).optional(),
 });
 
+const walletPortfolioVisualSchema = walletPortfolioChartSchema.extend({
+  maxPoints: z.number().int().min(10).max(500).default(90),
+  width: z.number().int().min(300).max(2000).default(1200),
+  height: z.number().int().min(200).max(1200).default(600),
+});
+
 const walletTradeHistorySchema = walletAddressSchema.extend({
   cursor: z.string().min(1).optional(),
 });
 
 const walletHoldingsPageSchema = walletAddressSchema.extend({
   page: z.number().int().min(1),
+});
+
+const walletHoldingsChartSchema = walletAddressSchema.extend({
+  top: z.number().int().min(3).max(20).default(10),
+  width: z.number().int().min(300).max(2000).default(900),
+  height: z.number().int().min(200).max(1200).default(600),
+});
+
+const walletPerformanceChartSchema = walletAddressSchema.extend({
+  showHistoricPnL: z.boolean().default(true),
+  holdingCheck: z.boolean().optional(),
+  hideDetails: z.boolean().optional(),
+  maxPoints: z.number().int().min(10).max(500).default(90),
+  maxTokens: z.number().int().min(3).max(25).default(12),
+  width: z.number().int().min(300).max(2000).default(1200),
+  height: z.number().int().min(200).max(1200).default(600),
 });
 
 const walletStreamSampleSchema = z.object({
@@ -1193,6 +1635,22 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "wallet_get_portfolio_chart_visual",
+    description:
+      "Build a shareable line chart URL for wallet portfolio history so agents can send a graphical portfolio view.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        days: { type: "number", description: "Optional lookback days passed to portfolio endpoint." },
+        maxPoints: { type: "number", description: "Number of points to render (default 90)." },
+        width: { type: "number" },
+        height: { type: "number" },
+      },
+    },
+  },
+  {
     name: "wallet_get_summary",
     description: "Fetch basic wallet summary via Dritan.",
     inputSchema: {
@@ -1227,6 +1685,21 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "wallet_get_holdings_chart",
+    description:
+      "Build a shareable holdings allocation chart URL from wallet holdings so agents can show token balance distribution.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        top: { type: "number", description: "Top token count before grouping remainder into Others (default 10)." },
+        width: { type: "number" },
+        height: { type: "number" },
+      },
+    },
+  },
+  {
     name: "wallet_get_holdings_page",
     description: "Fetch paginated wallet holdings via Dritan.",
     inputSchema: {
@@ -1235,6 +1708,28 @@ const tools: Tool[] = [
       properties: {
         wallet: { type: "string" },
         page: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "wallet_get_performance_chart",
+    description:
+      "Build a shareable wallet PnL chart URL (history when available, otherwise summary/token PnL bars) for graphical performance views.",
+    inputSchema: {
+      type: "object",
+      required: ["wallet"],
+      properties: {
+        wallet: { type: "string" },
+        showHistoricPnL: { type: "boolean" },
+        holdingCheck: { type: "boolean" },
+        hideDetails: { type: "boolean" },
+        maxPoints: { type: "number", description: "Max history points when rendering PnL history (default 90)." },
+        maxTokens: {
+          type: "number",
+          description: "Max token bars when history/summary is unavailable (default 12).",
+        },
+        width: { type: "number" },
+        height: { type: "number" },
       },
     },
   },
@@ -1725,6 +2220,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
+      case "wallet_get_performance_chart": {
+        const input = walletPerformanceChartSchema.parse(args);
+        const client = getDritanClient();
+        const performance = await client.getWalletPerformance(input.wallet, {
+          showHistoricPnL: input.showHistoricPnL,
+          holdingCheck: input.holdingCheck,
+          hideDetails: input.hideDetails,
+        });
+
+        const history = extractPnlHistory(performance, input.maxPoints);
+        if (history && history.length > 1) {
+          const config = buildWalletPnlHistoryChartConfig(input.wallet, history);
+          const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+          return ok({
+            wallet: input.wallet,
+            chartMode: "history",
+            points: history.length,
+            chartUrlType,
+            chartUrl,
+            markdown: `![${input.wallet} pnl history](${chartUrl})`,
+            latestValue: history[history.length - 1].value,
+          });
+        }
+
+        const summaryMetrics = extractPnlSummaryMetrics(performance);
+        if (summaryMetrics.length >= 2) {
+          const config = buildWalletPnlMetricChartConfig(input.wallet, summaryMetrics, "PnL Summary");
+          const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+          return ok({
+            wallet: input.wallet,
+            chartMode: "summary",
+            metrics: summaryMetrics,
+            chartUrlType,
+            chartUrl,
+            markdown: `![${input.wallet} pnl summary](${chartUrl})`,
+          });
+        }
+
+        const tokenMetrics = extractPnlTokenMetrics(performance, input.maxTokens);
+        if (tokenMetrics.length >= 1) {
+          const config = buildWalletPnlMetricChartConfig(input.wallet, tokenMetrics, "Token PnL");
+          const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+          return ok({
+            wallet: input.wallet,
+            chartMode: "tokens",
+            metrics: tokenMetrics,
+            chartUrlType,
+            chartUrl,
+            markdown: `![${input.wallet} token pnl](${chartUrl})`,
+          });
+        }
+
+        throw new Error("No chartable PnL fields found in wallet performance response.");
+      }
+
       case "wallet_get_token_performance": {
         const input = walletTokenPerformanceSchema.parse(args);
         const client = getDritanClient();
@@ -1735,6 +2285,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const input = walletPortfolioChartSchema.parse(args);
         const client = getDritanClient();
         return ok(await client.getWalletPortfolioChart(input.wallet, { days: input.days }));
+      }
+
+      case "wallet_get_portfolio_chart_visual": {
+        const input = walletPortfolioVisualSchema.parse(args);
+        const client = getDritanClient();
+        const portfolio = await client.getWalletPortfolioChart(input.wallet, { days: input.days });
+        const points = buildPortfolioPoints(portfolio.history ?? {}, input.maxPoints);
+        if (points.length === 0) {
+          throw new Error(`No portfolio history points available for ${input.wallet}.`);
+        }
+
+        const config = buildWalletPortfolioVisualChartConfig(input.wallet, points);
+        const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+        return ok({
+          wallet: input.wallet,
+          days: input.days ?? null,
+          points: points.length,
+          chartUrlType,
+          chartUrl,
+          markdown: `![${input.wallet} portfolio chart](${chartUrl})`,
+          latestValue: points[points.length - 1].value,
+          summary: {
+            total: portfolio.total,
+            totalInvested: portfolio.totalInvested,
+            totalWins: portfolio.totalWins,
+            totalLosses: portfolio.totalLosses,
+            winPercentage: portfolio.winPercentage,
+          },
+        });
       }
 
       case "wallet_get_summary": {
@@ -1753,6 +2332,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const input = walletAddressSchema.parse(args);
         const client = getDritanClient();
         return ok(await client.getWalletHoldings(input.wallet));
+      }
+
+      case "wallet_get_holdings_chart": {
+        const input = walletHoldingsChartSchema.parse(args);
+        const client = getDritanClient();
+        const holdings = await client.getWalletHoldings(input.wallet);
+        const slices = buildWalletHoldingsSlices(holdings, input.top);
+        if (slices.length === 0) {
+          throw new Error(`No chartable holdings values available for ${input.wallet}.`);
+        }
+        const totalValue = slices.reduce((sum, slice) => sum + slice.value, 0);
+        const config = buildWalletHoldingsChartConfig(input.wallet, slices);
+        const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+        return ok({
+          wallet: input.wallet,
+          top: input.top,
+          chartUrlType,
+          chartUrl,
+          markdown: `![${input.wallet} holdings allocation](${chartUrl})`,
+          totalValue,
+          totalValueCompact: formatCompactNumber(totalValue),
+          slices: slices.map((slice) => ({
+            ...slice,
+            percentage: Number(((slice.value / totalValue) * 100).toFixed(2)),
+          })),
+        });
       }
 
       case "wallet_get_holdings_page": {

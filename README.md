@@ -61,11 +61,14 @@ npm run build && npm start
 - `token_get_ohlcv`
 - `token_get_ohlcv_chart`
 - `wallet_get_performance`
+- `wallet_get_performance_chart`
 - `wallet_get_token_performance`
 - `wallet_get_portfolio_chart`
+- `wallet_get_portfolio_chart_visual`
 - `wallet_get_summary`
 - `wallet_get_trade_history`
 - `wallet_get_holdings`
+- `wallet_get_holdings_chart`
 - `wallet_get_holdings_page`
 - `market_stream_sample`
 - `wallet_stream_sample`
@@ -93,6 +96,10 @@ npm run build && npm start
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
 - `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `candlestick`).
 - `token_get_ohlcv_chart` defaults to `maxPoints: 30`; set higher `maxPoints` only when users explicitly ask for more history.
+- Wallet visual chart workflow:
+- `wallet_get_holdings_chart` for balance allocation (token distribution).
+- `wallet_get_portfolio_chart_visual` for portfolio equity curve.
+- `wallet_get_performance_chart` for PnL history/summary/token-level bars depending on available fields.
 - `ths_get_top_wallets` returns a paginated leaderboard of THS-ranked wallets (`page`, `limit`) for smart-wallet discovery workflows.
 - Ticker workflow for chart requests: `token_search` -> extract mint -> `token_get_ohlcv` or `token_get_ohlcv_chart`.
 - If users ask for `$WIF` style symbols, always resolve mint with `token_search` first.
