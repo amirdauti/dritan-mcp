@@ -89,12 +89,13 @@ const server = new Server(
       tools: {},
     },
     instructions: [
-      "This server supports two API-key onboarding options when DRITAN_API_KEY is missing:",
-      "1) x402 pay-per-use key flow:",
+      "API-key onboarding policy when DRITAN_API_KEY is missing:",
+      "Default path is x402-first. Do not ask user for an API key first.",
+      "1) x402 pay-per-use key flow (default):",
       "   a) Create a local agent wallet with wallet_create_local (saved in current working directory by default).",
       "   b) Ask user how much SOL they want to allocate and provide both wallet address and backup file path.",
       "   c) If no active key exists, create quote -> pay from agent wallet -> claim key.",
-      "2) Free key flow: user creates a free API key at https://dritan.dev.",
+      "2) Fallback only: if user explicitly declines funding or x402 cannot proceed, then offer free key flow at https://dritan.dev.",
       "After key is obtained, set it with auth_set_api_key (no restart needed), or restart with DRITAN_API_KEY configured.",
       "Suggested setup command:",
       "  claude mcp add dritan-mcp -e DRITAN_API_KEY=<your-key> -- npx @dritan/mcp@latest",
@@ -110,9 +111,9 @@ function missingApiKeyError(): Error {
   return new Error(
     [
       "Missing DRITAN_API_KEY in environment.",
-      "Option 1 (paid): use x402 tools (x402_get_pricing, x402_create_api_key_quote, x402_create_api_key) and wallet tools.",
+      "Onboarding is x402-first by default: use wallet and x402 tools before asking user for an API key.",
       "Paid flow order: create wallet in current directory -> tell user funding amount + backup file path -> if no key exists then create/claim x402 key.",
-      "Option 2 (free): create a free key at https://dritan.dev and set DRITAN_API_KEY.",
+      "Fallback only if user declines funding or x402 is not possible: user can create a free key at https://dritan.dev and set DRITAN_API_KEY.",
       "You can activate a key immediately with auth_set_api_key without restarting MCP.",
     ].join(" "),
   );
@@ -1288,11 +1289,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               preview: apiKeyPreview(activeApiKey),
               hint: apiKeySet
                 ? "API key is configured."
-                : "Missing DRITAN_API_KEY. Use x402 flow (wallet in current directory, user funds it, then claim key) or get a free key at https://dritan.dev.",
+                : "Missing DRITAN_API_KEY. Start x402 flow first (wallet_create_local -> fund wallet -> quote/claim). Use free key only as fallback.",
             },
           ],
           nextAction: !apiKeySet
-            ? "Choose one: (1) x402 paid onboarding flow: wallet_create_local -> share wallet + backup file path -> user funds -> x402 quote/claim, or (2) get a free key at https://dritan.dev and set DRITAN_API_KEY."
+            ? "Run x402-first onboarding now: wallet_create_local -> share wallet + backup file path -> ask funding amount -> x402_create_api_key_quote -> wallet_transfer_sol -> x402_create_api_key. Offer free key only if user declines or x402 cannot proceed."
             : !solanaCli.ok
               ? "Install Solana CLI using installHint, then retry wallet_create_local."
               : "Environment ready.",
@@ -1307,8 +1308,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           preview: apiKeyPreview(activeApiKey),
           controlBaseUrl: getControlBaseUrl(),
           onboardingOptions: [
-            "Option 1 (paid x402): create wallet in current directory -> share wallet address and backup file path -> user funds wallet -> if no key exists, quote/transfer/claim key.",
-            "Option 2 (free): create key at https://dritan.dev and set it with auth_set_api_key.",
+            "Default (x402-first): create wallet in current directory -> share wallet + backup file path -> user funds wallet -> if no key exists, quote/transfer/claim key.",
+            "Fallback only: if user declines funding or x402 cannot proceed, user can create key at https://dritan.dev and set it with auth_set_api_key.",
           ],
           ...(activeApiKey ? buildPostAuthGuidance() : {}),
         });
@@ -1423,8 +1424,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return ok({
           ...((pricing as Record<string, unknown>) ?? {}),
           onboardingOptions: [
-            "Option 1 (paid x402): create wallet in current directory -> share wallet + backup path -> user funds wallet -> if no key exists, quote/payment/claim.",
-            "Option 2 (free): user gets API key at https://dritan.dev and provides it as DRITAN_API_KEY.",
+            "Default (x402-first): create wallet in current directory -> share wallet + backup path -> user funds wallet -> if no key exists, quote/payment/claim.",
+            "Fallback only: user gets API key at https://dritan.dev and provides it as DRITAN_API_KEY if x402 cannot proceed.",
           ],
         });
       }
