@@ -1,3 +1,9 @@
+## [0.8.0](https://github.com/amirdauti/dritan-mcp/compare/v0.7.0...v0.8.0) (2026-02-14)
+
+### Features
+
+* align x402 onboarding flow with agent wallet funding steps ([65d20d2](https://github.com/amirdauti/dritan-mcp/commit/65d20d2479ece2b7ae5b52f3118f23eaf4af6542))
+
 ## [0.7.0](https://github.com/amirdauti/dritan-mcp/compare/v0.6.1...v0.7.0) (2026-02-14)
 
 ### Features
