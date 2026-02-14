@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -28,8 +28,14 @@ import {
 import { z } from "zod";
 
 const DEFAULT_WALLET_DIR = process.cwd();
+const DEFAULT_API_KEY_STORE_PATH = resolve(process.cwd(), ".dritan-mcp", "auth.json");
 const LAMPORTS_PER_SOL = 1_000_000_000;
-type ApiKeySource = "none" | "env" | "runtime" | "x402";
+type ApiKeySource = "none" | "env" | "runtime" | "x402" | "persisted";
+type PersistedApiKeyRecord = {
+  apiKey: string;
+  source: Exclude<ApiKeySource, "none">;
+  updatedAt: string;
+};
 function normalizeApiKey(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -39,8 +45,68 @@ function apiKeyPreview(apiKey: string | null): string | null {
   if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}...`;
   return `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`;
 }
-let runtimeApiKey: string | null = normalizeApiKey(process.env.DRITAN_API_KEY);
-let runtimeApiKeySource: ApiKeySource = runtimeApiKey ? "env" : "none";
+function getApiKeyStorePath(): string {
+  const configured = process.env.DRITAN_MCP_AUTH_FILE?.trim();
+  return configured ? resolve(configured) : DEFAULT_API_KEY_STORE_PATH;
+}
+const API_KEY_STORE_PATH = getApiKeyStorePath();
+
+function loadPersistedApiKey(): string | null {
+  if (!existsSync(API_KEY_STORE_PATH)) return null;
+  try {
+    const raw = readFileSync(API_KEY_STORE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as Partial<PersistedApiKeyRecord>;
+    return normalizeApiKey(parsed.apiKey);
+  } catch (error) {
+    console.warn(
+      `[dritan-mcp] Failed to read persisted API key from ${API_KEY_STORE_PATH}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
+function persistApiKey(apiKey: string, source: Exclude<ApiKeySource, "none">): void {
+  const payload: PersistedApiKeyRecord = {
+    apiKey,
+    source,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    mkdirSync(dirname(API_KEY_STORE_PATH), { recursive: true, mode: 0o700 });
+    writeFileSync(API_KEY_STORE_PATH, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    console.warn(
+      `[dritan-mcp] Failed to persist API key to ${API_KEY_STORE_PATH}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+function clearPersistedApiKey(): boolean {
+  if (!existsSync(API_KEY_STORE_PATH)) return false;
+  try {
+    rmSync(API_KEY_STORE_PATH, { force: true });
+    return true;
+  } catch (error) {
+    console.warn(
+      `[dritan-mcp] Failed to remove persisted API key file ${API_KEY_STORE_PATH}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
+}
+
+const persistedStartupKey = loadPersistedApiKey();
+const envStartupKey = normalizeApiKey(process.env.DRITAN_API_KEY);
+let runtimeApiKey: string | null = persistedStartupKey ?? envStartupKey;
+let runtimeApiKeySource: ApiKeySource = persistedStartupKey ? "persisted" : envStartupKey ? "env" : "none";
+if (runtimeApiKey) {
+  process.env.DRITAN_API_KEY = runtimeApiKey;
+}
 
 function setRuntimeApiKey(apiKey: string, source: Exclude<ApiKeySource, "none" | "env"> | "env"): string {
   const normalized = normalizeApiKey(apiKey);
@@ -49,12 +115,20 @@ function setRuntimeApiKey(apiKey: string, source: Exclude<ApiKeySource, "none" |
   }
   runtimeApiKey = normalized;
   runtimeApiKeySource = source;
+  persistApiKey(normalized, source);
   process.env.DRITAN_API_KEY = normalized;
   return normalized;
 }
 
 function getActiveApiKey(): string | null {
   if (runtimeApiKey) return runtimeApiKey;
+  const fromPersisted = loadPersistedApiKey();
+  if (fromPersisted) {
+    runtimeApiKey = fromPersisted;
+    runtimeApiKeySource = "persisted";
+    process.env.DRITAN_API_KEY = fromPersisted;
+    return fromPersisted;
+  }
   const fromEnv = normalizeApiKey(process.env.DRITAN_API_KEY);
   if (fromEnv) {
     runtimeApiKey = fromEnv;
@@ -96,7 +170,7 @@ const server = new Server(
       "   b) Ask user how much SOL they want to allocate and provide both wallet address and backup file path.",
       "   c) If no active key exists, create quote -> pay from agent wallet -> claim key.",
       "2) Fallback only: if user explicitly declines funding or x402 cannot proceed, then offer free key flow at https://dritan.dev.",
-      "After key is obtained, set it with auth_set_api_key (no restart needed), or restart with DRITAN_API_KEY configured.",
+      `After key is obtained, set it with auth_set_api_key (no restart needed); MCP persists it at ${API_KEY_STORE_PATH} for restart recovery.`,
       "Suggested setup command:",
       "  claude mcp add dritan-mcp -e DRITAN_API_KEY=<your-key> -- npx @dritan/mcp@latest",
     ].join("\n"),
@@ -111,10 +185,11 @@ function missingApiKeyError(): Error {
   return new Error(
     [
       "Missing DRITAN_API_KEY in environment.",
+      `No active key found in persisted auth store (${API_KEY_STORE_PATH}).`,
       "Onboarding is x402-first by default: use wallet and x402 tools before asking user for an API key.",
       "Paid flow order: create wallet in current directory -> tell user funding amount + backup file path -> if no key exists then create/claim x402 key.",
       "Fallback only if user declines funding or x402 is not possible: user can create a free key at https://dritan.dev and set DRITAN_API_KEY.",
-      "You can activate a key immediately with auth_set_api_key without restarting MCP.",
+      "You can activate a key immediately with auth_set_api_key without restarting MCP; key is persisted locally for restart recovery.",
     ].join(" "),
   );
 }
@@ -643,6 +718,10 @@ const authSetApiKeySchema = z.object({
   apiKey: z.string().min(8),
 });
 
+const authClearApiKeySchema = z.object({
+  clearEnv: z.boolean().optional(),
+});
+
 const walletPathSchema = z.object({
   walletPath: z.string().min(1),
 });
@@ -802,12 +881,23 @@ const tools: Tool[] = [
   {
     name: "auth_set_api_key",
     description:
-      "Set the active Dritan API key for this running MCP process without restart (runtime session scope).",
+      "Set the active Dritan API key for this running MCP process and persist it locally for restart recovery.",
     inputSchema: {
       type: "object",
       required: ["apiKey"],
       properties: {
         apiKey: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "auth_clear_api_key",
+    description:
+      "Clear the active in-memory API key and delete the persisted auth file. Optionally clear DRITAN_API_KEY in this process env.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        clearEnv: { type: "boolean", description: "Also remove DRITAN_API_KEY from this process environment." },
       },
     },
   },
@@ -1277,9 +1367,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const solanaCli = checkSolanaCli();
         const activeApiKey = getActiveApiKey();
         const apiKeySet = !!activeApiKey;
+        const persistedApiKeyPresent = existsSync(API_KEY_STORE_PATH);
         return ok({
           ready: solanaCli.ok && apiKeySet,
           readyForX402Onboarding: solanaCli.ok,
+          apiKeyStorePath: API_KEY_STORE_PATH,
+          persistedApiKeyPresent,
           checks: [
             solanaCli,
             {
@@ -1289,7 +1382,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               preview: apiKeyPreview(activeApiKey),
               hint: apiKeySet
                 ? "API key is configured."
-                : "Missing DRITAN_API_KEY. Start x402 flow first (wallet_create_local -> fund wallet -> quote/claim). Use free key only as fallback.",
+                : "Missing active API key. Start x402 flow first (wallet_create_local -> fund wallet -> quote/claim). Use free key only as fallback.",
             },
           ],
           nextAction: !apiKeySet
@@ -1307,6 +1400,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           source: runtimeApiKeySource,
           preview: apiKeyPreview(activeApiKey),
           controlBaseUrl: getControlBaseUrl(),
+          apiKeyStorePath: API_KEY_STORE_PATH,
+          persistedApiKeyPresent: existsSync(API_KEY_STORE_PATH),
           onboardingOptions: [
             "Default (x402-first): create wallet in current directory -> share wallet + backup file path -> user funds wallet -> if no key exists, quote/transfer/claim key.",
             "Fallback only: if user declines funding or x402 cannot proceed, user can create key at https://dritan.dev and set it with auth_set_api_key.",
@@ -1320,10 +1415,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const activated = setRuntimeApiKey(input.apiKey, "runtime");
         return ok({
           ok: true,
-          message: "API key activated for this MCP session without restart.",
+          message: "API key activated and persisted for this MCP session without restart.",
           source: runtimeApiKeySource,
           preview: apiKeyPreview(activated),
+          apiKeyStorePath: API_KEY_STORE_PATH,
           ...buildPostAuthGuidance(),
+        });
+      }
+
+      case "auth_clear_api_key": {
+        const input = authClearApiKeySchema.parse(args);
+        runtimeApiKey = null;
+        runtimeApiKeySource = "none";
+        const persistedApiKeyRemoved = clearPersistedApiKey();
+        const envCleared = !!input.clearEnv;
+        if (envCleared) {
+          delete process.env.DRITAN_API_KEY;
+        }
+        return ok({
+          ok: true,
+          source: runtimeApiKeySource,
+          persistedApiKeyRemoved,
+          envCleared,
+          apiKeyStorePath: API_KEY_STORE_PATH,
+          message:
+            "Active key cleared from memory and persisted store. If clearEnv=false and env still has DRITAN_API_KEY, restarting may load that env key.",
         });
       }
 
@@ -1463,7 +1579,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             activated: true,
             source: runtimeApiKeySource,
             preview: apiKeyPreview(activated),
-            message: "x402-created API key is active for this MCP session (no restart needed).",
+            apiKeyStorePath: API_KEY_STORE_PATH,
+            message:
+              "x402-created API key is active for this MCP session and persisted locally for restart recovery (no restart needed).",
           };
           Object.assign(payload, buildPostAuthGuidance());
         }

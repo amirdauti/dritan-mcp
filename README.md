@@ -41,6 +41,7 @@ npm run build && npm start
 - `system_check_prereqs`
 - `auth_status`
 - `auth_set_api_key`
+- `auth_clear_api_key`
 - `wallet_create_local`
 - `wallet_get_address`
 - `wallet_get_balance`
@@ -82,12 +83,13 @@ npm run build && npm start
 - Wallets default to the current working directory (`process.cwd()`).
 - Private keys never leave local files; only public address/signature are returned.
 - `swap_sign_and_broadcast` signs locally, then broadcasts via Dritan.
-- `auth_set_api_key` activates a key for the running MCP process without restart.
+- `auth_set_api_key` activates a key for the running MCP process without restart and persists it to a local auth store.
 - `auth_set_api_key` and successful `x402_create_api_key` responses include a capability summary so agents can immediately guide users to next actions.
-- Agent onboarding without `DRITAN_API_KEY` should present two options:
-  - Option 1: paid x402 flow (`wallet_create_local` in current directory -> share wallet + backup file path -> user chooses SOL amount and funds agent wallet -> if no key exists use `x402_create_api_key_quote` -> `wallet_transfer_sol` -> `x402_create_api_key`).
-  - Option 2: user gets a free key at `https://dritan.dev`.
-- `x402_create_api_key` auto-activates returned keys for the current MCP session.
+- Agent onboarding without an active API key should use x402-first flow (`wallet_create_local` in current directory -> share wallet + backup file path -> user chooses SOL amount and funds agent wallet -> if no key exists use `x402_create_api_key_quote` -> `wallet_transfer_sol` -> `x402_create_api_key`).
+- Free key at `https://dritan.dev` is fallback only if the user declines funding or x402 cannot proceed.
+- `x402_create_api_key` auto-activates returned keys and persists them locally for restart recovery.
+- Default auth store path is `.dritan-mcp/auth.json` under current working directory; override with `DRITAN_MCP_AUTH_FILE`.
+- Use `auth_clear_api_key` to remove in-memory + persisted key state (and optionally clear process env key).
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
 - `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `candlestick`).
 - `ths_get_top_wallets` returns a paginated leaderboard of THS-ranked wallets (`page`, `limit`) for smart-wallet discovery workflows.
