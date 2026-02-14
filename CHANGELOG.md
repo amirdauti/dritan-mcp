@@ -1,3 +1,9 @@
+## [0.12.0](https://github.com/amirdauti/dritan-mcp/compare/v0.11.0...v0.12.0) (2026-02-14)
+
+### Features
+
+* add wallet visual chart tools for holdings portfolio and pnl ([3592054](https://github.com/amirdauti/dritan-mcp/commit/3592054114e7632d652d66fcac10cc00dee694cc))
+
 ## [0.11.0](https://github.com/amirdauti/dritan-mcp/compare/v0.10.1...v0.11.0) (2026-02-14)
 
 ### Features
