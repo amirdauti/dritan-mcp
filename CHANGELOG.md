@@ -1,3 +1,9 @@
+## [0.10.0](https://github.com/amirdauti/dritan-mcp/compare/v0.9.0...v0.10.0) (2026-02-14)
+
+### Features
+
+* persist api keys locally for restart recovery ([8d79ec1](https://github.com/amirdauti/dritan-mcp/commit/8d79ec1ab840fb4c9e24529d1ebea562f84a07c7))
+
 ## [0.9.0](https://github.com/amirdauti/dritan-mcp/compare/v0.8.0...v0.9.0) (2026-02-14)
 
 ### Features
