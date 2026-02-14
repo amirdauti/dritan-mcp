@@ -92,6 +92,7 @@ npm run build && npm start
 - Use `auth_clear_api_key` to remove in-memory + persisted key state (and optionally clear process env key).
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
 - `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `candlestick`).
+- `token_get_ohlcv_chart` defaults to `maxPoints: 30`; set higher `maxPoints` only when users explicitly ask for more history.
 - `ths_get_top_wallets` returns a paginated leaderboard of THS-ranked wallets (`page`, `limit`) for smart-wallet discovery workflows.
 - Ticker workflow for chart requests: `token_search` -> extract mint -> `token_get_ohlcv` or `token_get_ohlcv_chart`.
 - If users ask for `$WIF` style symbols, always resolve mint with `token_search` first.

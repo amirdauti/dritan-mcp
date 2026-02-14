@@ -815,7 +815,7 @@ const tokenOhlcvSchema = z.object({
 const tokenOhlcvChartSchema = tokenOhlcvSchema.extend({
   chartType: z.enum(["line-volume", "candlestick"]).default("candlestick"),
   includeActive: z.boolean().default(true),
-  maxPoints: z.number().int().min(10).max(500).default(120),
+  maxPoints: z.number().int().min(10).max(500).default(30),
   width: z.number().int().min(300).max(2000).default(1200),
   height: z.number().int().min(200).max(1200).default(600),
 });
@@ -1148,7 +1148,7 @@ const tools: Tool[] = [
           description: "Chart style. Default candlestick.",
         },
         includeActive: { type: "boolean" },
-        maxPoints: { type: "number" },
+        maxPoints: { type: "number", description: "Number of candles to render (default 30)." },
         width: { type: "number" },
         height: { type: "number" },
       },
