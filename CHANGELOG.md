@@ -1,3 +1,9 @@
+## [0.7.0](https://github.com/amirdauti/dritan-mcp/compare/v0.6.1...v0.7.0) (2026-02-14)
+
+### Features
+
+* add THS top-wallets MCP tool and post-auth guidance ([6304456](https://github.com/amirdauti/dritan-mcp/commit/6304456c18e00b32e3995ba9523610bcaa82d1f1))
+
 ## [0.6.1](https://github.com/amirdauti/dritan-mcp/compare/v0.6.0...v0.6.1) (2026-02-14)
 
 ### Bug Fixes
