@@ -87,7 +87,7 @@ npm run build && npm start
   - Option 2: user gets a free key at `https://dritan.dev`.
 - `x402_create_api_key` auto-activates returned keys for the current MCP session.
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
-- `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `line-volume`).
+- `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `candlestick`).
 - Ticker workflow for chart requests: `token_search` -> extract mint -> `token_get_ohlcv` or `token_get_ohlcv_chart`.
 - If users ask for `$WIF` style symbols, always resolve mint with `token_search` first.
 - If Solana CLI is missing, run `system_check_prereqs` and follow returned install steps.

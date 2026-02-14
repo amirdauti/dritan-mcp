@@ -386,19 +386,10 @@ function buildCandlestickOhlcvChartUrl(
   );
 
   const config = {
-    type: "candlestick",
+    type: "bar",
     data: {
       labels,
       datasets: [
-        {
-          label: "OHLC",
-          data: candles,
-          color: {
-            up: "#10b981",
-            down: "#ef4444",
-            unchanged: "#94a3b8",
-          },
-        },
         {
           type: "bar",
           label: "Volume",
@@ -406,6 +397,23 @@ function buildCandlestickOhlcvChartUrl(
           backgroundColor: volumeColors,
           borderWidth: 0,
           yAxisID: "volume",
+          barPercentage: 0.9,
+          categoryPercentage: 1,
+          maxBarThickness: 14,
+          order: 1,
+        },
+        {
+          type: "candlestick",
+          label: "OHLC",
+          data: candles,
+          yAxisID: "price",
+          parsing: false,
+          order: 2,
+          color: {
+            up: "#10b981",
+            down: "#ef4444",
+            unchanged: "#94a3b8",
+          },
         },
       ],
     },
@@ -419,8 +427,13 @@ function buildCandlestickOhlcvChartUrl(
       },
       scales: {
         x: { type: "category" },
-        y: { type: "linear", position: "left" },
-        volume: { type: "linear", position: "right", grid: { drawOnChartArea: false } },
+        price: { type: "linear", position: "left" },
+        volume: {
+          type: "linear",
+          position: "right",
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+        },
       },
     },
   };
@@ -641,7 +654,7 @@ const tokenOhlcvSchema = z.object({
 });
 
 const tokenOhlcvChartSchema = tokenOhlcvSchema.extend({
-  chartType: z.enum(["line-volume", "candlestick"]).default("line-volume"),
+  chartType: z.enum(["line-volume", "candlestick"]).default("candlestick"),
   includeActive: z.boolean().default(true),
   maxPoints: z.number().int().min(10).max(500).default(120),
   width: z.number().int().min(300).max(2000).default(1200),
@@ -957,7 +970,7 @@ const tools: Tool[] = [
         chartType: {
           type: "string",
           enum: ["line-volume", "candlestick"],
-          description: "Chart style. Default line-volume.",
+          description: "Chart style. Default candlestick.",
         },
         includeActive: { type: "boolean" },
         maxPoints: { type: "number" },
