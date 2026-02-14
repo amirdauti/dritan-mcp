@@ -426,13 +426,11 @@ function formatChartLabel(ts: number): string {
 
 type OhlcvChartType = "line-volume" | "candlestick";
 
-function buildLineVolumeOhlcvChartUrl(
+function buildLineVolumeOhlcvChartConfig(
   mint: string,
   timeframe: string,
   bars: TokenOhlcvResponse["closed"],
-  width: number,
-  height: number,
-): string {
+): Record<string, unknown> {
   const labels = bars.map((bar) => formatChartLabel(bar.time));
   const closeSeries = bars.map((bar) => Number(bar.close.toFixed(12)));
   const volumeSeries = bars.map((bar) => Number(bar.volume.toFixed(12)));
@@ -478,19 +476,14 @@ function buildLineVolumeOhlcvChartUrl(
     },
   };
 
-  const encoded = encodeURIComponent(JSON.stringify(config));
-  // QuickChart defaults to Chart.js v2. Our config uses v3+/v4 scale syntax (`options.scales.{id}`),
-  // so pinning `v=4` prevents runtime render errors like "Cannot read properties of undefined (reading 'options')".
-  return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&v=4&c=${encoded}`;
+  return config;
 }
 
-function buildCandlestickOhlcvChartUrl(
+function buildCandlestickOhlcvChartConfig(
   mint: string,
   timeframe: string,
   bars: TokenOhlcvResponse["closed"],
-  width: number,
-  height: number,
-): string {
+): Record<string, unknown> {
   const labels = bars.map((bar) => formatChartLabel(bar.time));
   const candles = bars.map((bar, index) => ({
     x: labels[index],
@@ -557,23 +550,56 @@ function buildCandlestickOhlcvChartUrl(
     },
   };
 
+  return config;
+}
+
+function buildQuickChartDirectUrl(config: Record<string, unknown>, width: number, height: number): string {
   const encoded = encodeURIComponent(JSON.stringify(config));
-  // Pin Chart.js v4 for stable scale behavior and financial chart rendering.
+  // QuickChart defaults to Chart.js v2. Our config uses v3+/v4 scale syntax (`options.scales.{id}`),
+  // so pinning `v=4` prevents runtime render errors like "Cannot read properties of undefined (reading 'options')".
   return `https://quickchart.io/chart?w=${width}&h=${height}&f=png&v=4&c=${encoded}`;
 }
 
-function buildOhlcvChartUrl(
+async function buildQuickChartShortUrl(
+  config: Record<string, unknown>,
+  width: number,
+  height: number,
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch("https://quickchart.io/chart/create", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chart: config,
+        width,
+        height,
+        format: "png",
+        version: "4",
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { url?: unknown };
+    return typeof payload.url === "string" && payload.url.length > 0 ? payload.url : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildOhlcvChartConfig(
   chartType: OhlcvChartType,
   mint: string,
   timeframe: string,
   bars: TokenOhlcvResponse["closed"],
-  width: number,
-  height: number,
-): string {
+): Record<string, unknown> {
   if (chartType === "candlestick") {
-    return buildCandlestickOhlcvChartUrl(mint, timeframe, bars, width, height);
+    return buildCandlestickOhlcvChartConfig(mint, timeframe, bars);
   }
-  return buildLineVolumeOhlcvChartUrl(mint, timeframe, bars, width, height);
+  return buildLineVolumeOhlcvChartConfig(mint, timeframe, bars);
 }
 
 function getPlatformInstallHint(binary: "solana-keygen"): { platform: string; install: string[] } {
@@ -1666,20 +1692,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(`No OHLCV data available for ${input.mint} (${input.timeframe})`);
         }
 
-        const chartUrl = buildOhlcvChartUrl(
+        const chartConfig = buildOhlcvChartConfig(
           input.chartType,
           input.mint,
           input.timeframe,
           trimmedBars,
-          input.width,
-          input.height,
         );
+        const shortChartUrl = await buildQuickChartShortUrl(chartConfig, input.width, input.height);
+        const chartUrl = shortChartUrl ?? buildQuickChartDirectUrl(chartConfig, input.width, input.height);
 
         return ok({
           mint: input.mint,
           timeframe: input.timeframe,
           chartType: input.chartType,
           points: trimmedBars.length,
+          chartUrlType: shortChartUrl ? "short" : "direct",
           chartUrl,
           markdown: `![${input.mint} ${input.timeframe} chart](${chartUrl})`,
           lastBar: trimmedBars[trimmedBars.length - 1],
