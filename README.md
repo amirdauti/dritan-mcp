@@ -79,13 +79,13 @@ npm run build && npm start
 
 ## Notes
 
-- Wallets default to `~/.config/dritan-mcp/wallets`.
+- Wallets default to the current working directory (`process.cwd()`).
 - Private keys never leave local files; only public address/signature are returned.
 - `swap_sign_and_broadcast` signs locally, then broadcasts via Dritan.
 - `auth_set_api_key` activates a key for the running MCP process without restart.
 - `auth_set_api_key` and successful `x402_create_api_key` responses include a capability summary so agents can immediately guide users to next actions.
 - Agent onboarding without `DRITAN_API_KEY` should present two options:
-  - Option 1: paid x402 flow (`x402_get_pricing` -> `x402_create_api_key_quote` -> user funds agent wallet -> `wallet_transfer_sol` -> `x402_create_api_key`).
+  - Option 1: paid x402 flow (`wallet_create_local` in current directory -> share wallet + backup file path -> user chooses SOL amount and funds agent wallet -> if no key exists use `x402_create_api_key_quote` -> `wallet_transfer_sol` -> `x402_create_api_key`).
   - Option 2: user gets a free key at `https://dritan.dev`.
 - `x402_create_api_key` auto-activates returned keys for the current MCP session.
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.

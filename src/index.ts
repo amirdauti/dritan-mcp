@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -28,7 +27,7 @@ import {
 } from "@solana/web3.js";
 import { z } from "zod";
 
-const DEFAULT_WALLET_DIR = join(homedir(), ".config", "dritan-mcp", "wallets");
+const DEFAULT_WALLET_DIR = process.cwd();
 const LAMPORTS_PER_SOL = 1_000_000_000;
 type ApiKeySource = "none" | "env" | "runtime" | "x402";
 function normalizeApiKey(value: string | null | undefined): string | null {
@@ -91,7 +90,10 @@ const server = new Server(
     },
     instructions: [
       "This server supports two API-key onboarding options when DRITAN_API_KEY is missing:",
-      "1) x402 pay-per-use key flow: create wallet, receive SOL, create quote, forward payment, claim key.",
+      "1) x402 pay-per-use key flow:",
+      "   a) Create a local agent wallet with wallet_create_local (saved in current working directory by default).",
+      "   b) Ask user how much SOL they want to allocate and provide both wallet address and backup file path.",
+      "   c) If no active key exists, create quote -> pay from agent wallet -> claim key.",
       "2) Free key flow: user creates a free API key at https://dritan.dev.",
       "After key is obtained, set it with auth_set_api_key (no restart needed), or restart with DRITAN_API_KEY configured.",
       "Suggested setup command:",
@@ -109,6 +111,7 @@ function missingApiKeyError(): Error {
     [
       "Missing DRITAN_API_KEY in environment.",
       "Option 1 (paid): use x402 tools (x402_get_pricing, x402_create_api_key_quote, x402_create_api_key) and wallet tools.",
+      "Paid flow order: create wallet in current directory -> tell user funding amount + backup file path -> if no key exists then create/claim x402 key.",
       "Option 2 (free): create a free key at https://dritan.dev and set DRITAN_API_KEY.",
       "You can activate a key immediately with auth_set_api_key without restarting MCP.",
     ].join(" "),
@@ -573,7 +576,12 @@ function toWalletPath(name: string, walletDir?: string): string {
   return resolve(join(dir, `${safeName}.json`));
 }
 
-function createLocalWalletFile(walletPath: string): { walletPath: string; address: string } {
+function createLocalWalletFile(walletPath: string): {
+  walletPath: string;
+  backupFilePath: string;
+  address: string;
+  walletDir: string;
+} {
   const dir = dirname(walletPath);
   ensureWalletDir(dir);
 
@@ -599,7 +607,12 @@ function createLocalWalletFile(walletPath: string): { walletPath: string; addres
   }
 
   const keypair = loadKeypairFromPath(walletPath);
-  return { walletPath, address: keypair.publicKey.toBase58() };
+  return {
+    walletPath,
+    backupFilePath: walletPath,
+    walletDir: dir,
+    address: keypair.publicKey.toBase58(),
+  };
 }
 
 function loadKeypairFromPath(walletPath: string): Keypair {
@@ -1275,11 +1288,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               preview: apiKeyPreview(activeApiKey),
               hint: apiKeySet
                 ? "API key is configured."
-                : "Missing DRITAN_API_KEY. You can either use x402 onboarding tools or get a free key at https://dritan.dev.",
+                : "Missing DRITAN_API_KEY. Use x402 flow (wallet in current directory, user funds it, then claim key) or get a free key at https://dritan.dev.",
             },
           ],
           nextAction: !apiKeySet
-            ? "Choose one: (1) x402 paid onboarding flow with wallet tools, or (2) get a free key at https://dritan.dev and set DRITAN_API_KEY."
+            ? "Choose one: (1) x402 paid onboarding flow: wallet_create_local -> share wallet + backup file path -> user funds -> x402 quote/claim, or (2) get a free key at https://dritan.dev and set DRITAN_API_KEY."
             : !solanaCli.ok
               ? "Install Solana CLI using installHint, then retry wallet_create_local."
               : "Environment ready.",
@@ -1294,7 +1307,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           preview: apiKeyPreview(activeApiKey),
           controlBaseUrl: getControlBaseUrl(),
           onboardingOptions: [
-            "Option 1 (paid x402): create wallet -> receive user SOL -> x402 quote -> transfer -> claim key.",
+            "Option 1 (paid x402): create wallet in current directory -> share wallet address and backup file path -> user funds wallet -> if no key exists, quote/transfer/claim key.",
             "Option 2 (free): create key at https://dritan.dev and set it with auth_set_api_key.",
           ],
           ...(activeApiKey ? buildPostAuthGuidance() : {}),
@@ -1321,7 +1334,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const input = walletCreateSchema.parse(args);
         const walletPath = toWalletPath(input.name, input.walletDir);
         const created = createLocalWalletFile(walletPath);
-        return ok(created);
+        return ok({
+          ...created,
+          fundingInstruction:
+            "Ask the user how much SOL they want to allocate to this wallet, and tell them this backup file path.",
+        });
       }
 
       case "wallet_get_address": {
@@ -1406,7 +1423,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return ok({
           ...((pricing as Record<string, unknown>) ?? {}),
           onboardingOptions: [
-            "Option 1 (paid x402): create wallet -> receive user SOL -> x402 quote -> forward payment -> claim key.",
+            "Option 1 (paid x402): create wallet in current directory -> share wallet + backup path -> user funds wallet -> if no key exists, quote/payment/claim.",
             "Option 2 (free): user gets API key at https://dritan.dev and provides it as DRITAN_API_KEY.",
           ],
         });
@@ -1415,12 +1432,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "x402_create_api_key_quote": {
         const input = x402QuoteSchema.parse(args);
         const client = getX402Client();
+        const activeApiKey = getActiveApiKey();
         const quote = await x402CreateQuote(client, input);
         return ok({
           ...((quote as Record<string, unknown>) ?? {}),
+          apiKeyAlreadyConfigured: !!activeApiKey,
+          keyPreview: apiKeyPreview(activeApiKey),
           nextSteps: [
-            "If user picked paid flow, ensure agent has a local wallet (wallet_create_local + wallet_get_address).",
-            "User funds the agent wallet.",
+            "Ensure agent has a local wallet in current directory (wallet_create_local + wallet_get_address) and tell user the backup file path.",
+            "Ask user how much SOL they want to allocate; user funds the agent wallet.",
+            "Only proceed if no API key is active; otherwise skip paid key creation.",
             "Transfer quoted SOL amount to receiver wallet using wallet_transfer_sol.",
             "Claim key with x402_create_api_key using returned tx signature (MCP auto-activates returned apiKey).",
           ],
