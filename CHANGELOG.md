@@ -1,3 +1,9 @@
+## [0.10.1](https://github.com/amirdauti/dritan-mcp/compare/v0.10.0...v0.10.1) (2026-02-14)
+
+### Bug Fixes
+
+* prefer short quickchart urls for ohlcv chart responses ([0f0576a](https://github.com/amirdauti/dritan-mcp/commit/0f0576a9da9141a1ddd0972b1def991672a01eb2))
+
 ## [0.10.0](https://github.com/amirdauti/dritan-mcp/compare/v0.9.0...v0.10.0) (2026-02-14)
 
 ### Features
