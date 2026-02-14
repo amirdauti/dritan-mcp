@@ -115,6 +115,22 @@ function missingApiKeyError(): Error {
   );
 }
 
+const postAuthCapabilities = [
+  "Token intelligence: token search, price, metadata, risk, first buyers, deployer stats.",
+  "Charts: OHLCV data and shareable line-volume/candlestick chart URLs.",
+  "Wallet analytics: summary, holdings, trade history, performance, and portfolio charts.",
+  "Trader discovery: Meteora THS wallet score lookups plus top-wallet leaderboard.",
+  "Execution: build/sign/broadcast swaps and monitor wallet/DEX streams.",
+];
+
+function buildPostAuthGuidance() {
+  return {
+    capabilities: postAuthCapabilities,
+    suggestedNextPrompt:
+      "Tell me your goal and I can proceed: token research, smart-wallet discovery, chart generation, or swap execution.",
+  };
+}
+
 function getDritanClient(): DritanClient {
   const apiKey = getActiveApiKey();
   if (!apiKey) {
@@ -143,6 +159,30 @@ function getThsClient(): MeteoraThsClient {
   return new MeteoraThsClient({
     baseUrl: process.env.METEORA_THS_BASE_URL,
   });
+}
+
+async function getThsTopWallets(
+  ths: MeteoraThsClient,
+  options: { page?: number; limit?: number } = {},
+): Promise<unknown> {
+  const sdkMethod = (ths as unknown as {
+    getTopWalletsByScore?: (opts?: { page?: number; limit?: number }) => Promise<unknown>;
+  }).getTopWalletsByScore;
+  if (typeof sdkMethod === "function") {
+    return await sdkMethod.call(ths, options);
+  }
+
+  const baseUrl = (ths as unknown as { baseUrl?: string }).baseUrl ?? "https://ths.dritan.dev";
+  const url = new URL("/ths/top-wallets", baseUrl);
+  if (options.page !== undefined) url.searchParams.set("page", String(options.page));
+  if (options.limit !== undefined) url.searchParams.set("limit", String(options.limit));
+
+  const res = await fetch(url.toString(), { method: "GET" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Meteora THS request failed (${res.status}): ${text || res.statusText}`);
+  }
+  return (await res.json()) as unknown;
 }
 
 async function searchTokens(
@@ -703,6 +743,11 @@ const thsScoreTokensSchema = thsScoreSchema.extend({
   tokenMints: z.array(z.string().min(1)).min(1).max(200),
 });
 
+const thsTopWalletsSchema = z.object({
+  page: z.number().int().min(1).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
 const swapBuildSchema = z.object({
   walletPath: z.string().min(1).optional(),
   userPublicKey: z.string().min(1).optional(),
@@ -1142,6 +1187,17 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "ths_get_top_wallets",
+    description: "Fetch paginated top wallets ranked by THS score.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page: { type: "number" },
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
     name: "swap_build",
     description: "Build an unsigned swap transaction with Dritan.",
     inputSchema: {
@@ -1241,6 +1297,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             "Option 1 (paid x402): create wallet -> receive user SOL -> x402 quote -> transfer -> claim key.",
             "Option 2 (free): create key at https://dritan.dev and set it with auth_set_api_key.",
           ],
+          ...(activeApiKey ? buildPostAuthGuidance() : {}),
         });
       }
 
@@ -1252,6 +1309,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           message: "API key activated for this MCP session without restart.",
           source: runtimeApiKeySource,
           preview: apiKeyPreview(activated),
+          ...buildPostAuthGuidance(),
         });
       }
 
@@ -1385,6 +1443,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             preview: apiKeyPreview(activated),
             message: "x402-created API key is active for this MCP session (no restart needed).",
           };
+          Object.assign(payload, buildPostAuthGuidance());
         }
         return ok(payload);
       }
@@ -1657,6 +1716,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             breakdown: input.breakdown,
           }),
         );
+      }
+
+      case "ths_get_top_wallets": {
+        const input = thsTopWalletsSchema.parse(args);
+        const ths = getThsClient();
+        return ok(await getThsTopWallets(ths, input));
       }
 
       case "swap_build": {

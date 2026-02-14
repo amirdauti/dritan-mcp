@@ -72,6 +72,7 @@ npm run build && npm start
 - `ths_get_score`
 - `ths_get_score_tokens_get`
 - `ths_get_score_tokens_post`
+- `ths_get_top_wallets`
 - `swap_build`
 - `swap_sign_and_broadcast`
 - `swap_build_sign_and_broadcast`
@@ -82,12 +83,14 @@ npm run build && npm start
 - Private keys never leave local files; only public address/signature are returned.
 - `swap_sign_and_broadcast` signs locally, then broadcasts via Dritan.
 - `auth_set_api_key` activates a key for the running MCP process without restart.
+- `auth_set_api_key` and successful `x402_create_api_key` responses include a capability summary so agents can immediately guide users to next actions.
 - Agent onboarding without `DRITAN_API_KEY` should present two options:
   - Option 1: paid x402 flow (`x402_get_pricing` -> `x402_create_api_key_quote` -> user funds agent wallet -> `wallet_transfer_sol` -> `x402_create_api_key`).
   - Option 2: user gets a free key at `https://dritan.dev`.
 - `x402_create_api_key` auto-activates returned keys for the current MCP session.
 - `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
 - `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `candlestick`).
+- `ths_get_top_wallets` returns a paginated leaderboard of THS-ranked wallets (`page`, `limit`) for smart-wallet discovery workflows.
 - Ticker workflow for chart requests: `token_search` -> extract mint -> `token_get_ohlcv` or `token_get_ohlcv_chart`.
 - If users ask for `$WIF` style symbols, always resolve mint with `token_search` first.
 - If Solana CLI is missing, run `system_check_prereqs` and follow returned install steps.
