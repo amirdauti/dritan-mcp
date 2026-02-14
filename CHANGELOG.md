@@ -1,3 +1,9 @@
+## [0.11.0](https://github.com/amirdauti/dritan-mcp/compare/v0.10.1...v0.11.0) (2026-02-14)
+
+### Features
+
+* default ohlcv chart maxPoints to 30 ([9bcc043](https://github.com/amirdauti/dritan-mcp/commit/9bcc043be35acf2b191061e7bd30a61ef3f75046))
+
 ## [0.10.1](https://github.com/amirdauti/dritan-mcp/compare/v0.10.0...v0.10.1) (2026-02-14)
 
 ### Bug Fixes
