@@ -1,3 +1,9 @@
+## [0.6.1](https://github.com/amirdauti/dritan-mcp/compare/v0.6.0...v0.6.1) (2026-02-14)
+
+### Bug Fixes
+
+* default ohlcv chart to candlestick and stabilize volume bars ([99fb1b1](https://github.com/amirdauti/dritan-mcp/commit/99fb1b1b6f7f553990de20b95a36a023debab346))
+
 ## [0.6.0](https://github.com/amirdauti/dritan-mcp/compare/v0.5.1...v0.6.0) (2026-02-13)
 
 ### Features
