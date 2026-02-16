@@ -93,13 +93,14 @@ npm run build && npm start
 - `x402_create_api_key` auto-activates returned keys and persists them locally for restart recovery.
 - Default auth store path is `.dritan-mcp/auth.json` under current working directory; override with `DRITAN_MCP_AUTH_FILE`.
 - Use `auth_clear_api_key` to remove in-memory + persisted key state (and optionally clear process env key).
-- `token_get_ohlcv_chart` returns a shareable chart URL plus a ready-to-send markdown image snippet.
+- `token_get_ohlcv_chart` returns ready-to-send markdown image output (raw chart URL fields are intentionally omitted to force inline embedding).
 - `token_get_ohlcv_chart` supports `chartType: "line-volume" | "candlestick"` (default is `candlestick`).
 - `token_get_ohlcv_chart` defaults to `maxPoints: 30`; set higher `maxPoints` only when users explicitly ask for more history.
 - Wallet visual chart workflow:
 - `wallet_get_holdings_chart` for balance allocation (token distribution).
 - `wallet_get_portfolio_chart_visual` for portfolio equity curve.
 - `wallet_get_performance_chart` for PnL history/summary/token-level bars depending on available fields.
+- For all chart tools, agents should send the returned `markdown` field directly (no plain URL output).
 - `ths_get_top_wallets` returns a paginated leaderboard of THS-ranked wallets (`page`, `limit`) for smart-wallet discovery workflows.
 - Ticker workflow for chart requests: `token_search` -> extract mint -> `token_get_ohlcv` or `token_get_ohlcv_chart`.
 - If users ask for `$WIF` style symbols, always resolve mint with `token_search` first.

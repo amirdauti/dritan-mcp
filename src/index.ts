@@ -167,6 +167,7 @@ const server = new Server(
     instructions: [
       "API-key onboarding policy when DRITAN_API_KEY is missing:",
       "Default path is x402-first. Do not ask user for an API key first.",
+      "Chart response rule: when a tool response includes `markdown`, send that markdown image directly and do not send raw quickchart links.",
       "1) x402 pay-per-use key flow (default):",
       "   a) Create a local agent wallet with wallet_create_local (saved in current working directory by default).",
       "   b) Ask user how much SOL they want to allocate and provide both wallet address and backup file path.",
@@ -618,6 +619,24 @@ async function resolveChartUrl(
   return {
     chartUrl: shortChartUrl ?? buildQuickChartDirectUrl(config, width, height),
     chartUrlType: shortChartUrl ? "short" : "direct",
+  };
+}
+
+type ChartEmbedInfo = {
+  markdown: string;
+  chartUrlType: "short" | "direct";
+};
+
+async function resolveChartEmbed(
+  config: Record<string, unknown>,
+  width: number,
+  height: number,
+  alt: string,
+): Promise<ChartEmbedInfo> {
+  const { chartUrl, chartUrlType } = await resolveChartUrl(config, width, height);
+  return {
+    chartUrlType,
+    markdown: `![${alt}](${chartUrl})`,
   };
 }
 
@@ -1576,7 +1595,7 @@ const tools: Tool[] = [
   {
     name: "token_get_ohlcv_chart",
     description:
-      "Build a shareable chart URL from token OHLCV candles so agents can send an actual chart in chat (resolve ticker with token_search first). Supports line-volume or candlestick charts.",
+      "Build embeddable chart markdown from token OHLCV candles so agents can render the actual chart inline in chat (resolve ticker with token_search first). Supports line-volume or candlestick charts.",
     inputSchema: {
       type: "object",
       required: ["mint", "timeframe"],
@@ -1637,7 +1656,7 @@ const tools: Tool[] = [
   {
     name: "wallet_get_portfolio_chart_visual",
     description:
-      "Build a shareable line chart URL for wallet portfolio history so agents can send a graphical portfolio view.",
+      "Build embeddable line-chart markdown for wallet portfolio history so agents can render a graphical portfolio view inline.",
     inputSchema: {
       type: "object",
       required: ["wallet"],
@@ -1687,7 +1706,7 @@ const tools: Tool[] = [
   {
     name: "wallet_get_holdings_chart",
     description:
-      "Build a shareable holdings allocation chart URL from wallet holdings so agents can show token balance distribution.",
+      "Build embeddable holdings allocation chart markdown from wallet holdings so agents can render token balance distribution inline.",
     inputSchema: {
       type: "object",
       required: ["wallet"],
@@ -1714,7 +1733,7 @@ const tools: Tool[] = [
   {
     name: "wallet_get_performance_chart",
     description:
-      "Build a shareable wallet PnL chart URL (history when available, otherwise summary/token PnL bars) for graphical performance views.",
+      "Build embeddable wallet PnL chart markdown (history when available, otherwise summary/token PnL bars) for graphical performance views.",
     inputSchema: {
       type: "object",
       required: ["wallet"],
@@ -2193,17 +2212,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           input.timeframe,
           trimmedBars,
         );
-        const shortChartUrl = await buildQuickChartShortUrl(chartConfig, input.width, input.height);
-        const chartUrl = shortChartUrl ?? buildQuickChartDirectUrl(chartConfig, input.width, input.height);
+        const embed = await resolveChartEmbed(
+          chartConfig,
+          input.width,
+          input.height,
+          `${input.mint} ${input.timeframe} chart`,
+        );
 
         return ok({
           mint: input.mint,
           timeframe: input.timeframe,
           chartType: input.chartType,
           points: trimmedBars.length,
-          chartUrlType: shortChartUrl ? "short" : "direct",
-          chartUrl,
-          markdown: `![${input.mint} ${input.timeframe} chart](${chartUrl})`,
+          chartUrlType: embed.chartUrlType,
+          markdown: embed.markdown,
           lastBar: trimmedBars[trimmedBars.length - 1],
         });
       }
@@ -2232,14 +2254,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const history = extractPnlHistory(performance, input.maxPoints);
         if (history && history.length > 1) {
           const config = buildWalletPnlHistoryChartConfig(input.wallet, history);
-          const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+          const embed = await resolveChartEmbed(config, input.width, input.height, `${input.wallet} pnl history`);
           return ok({
             wallet: input.wallet,
             chartMode: "history",
             points: history.length,
-            chartUrlType,
-            chartUrl,
-            markdown: `![${input.wallet} pnl history](${chartUrl})`,
+            chartUrlType: embed.chartUrlType,
+            markdown: embed.markdown,
             latestValue: history[history.length - 1].value,
           });
         }
@@ -2247,28 +2268,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const summaryMetrics = extractPnlSummaryMetrics(performance);
         if (summaryMetrics.length >= 2) {
           const config = buildWalletPnlMetricChartConfig(input.wallet, summaryMetrics, "PnL Summary");
-          const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+          const embed = await resolveChartEmbed(config, input.width, input.height, `${input.wallet} pnl summary`);
           return ok({
             wallet: input.wallet,
             chartMode: "summary",
             metrics: summaryMetrics,
-            chartUrlType,
-            chartUrl,
-            markdown: `![${input.wallet} pnl summary](${chartUrl})`,
+            chartUrlType: embed.chartUrlType,
+            markdown: embed.markdown,
           });
         }
 
         const tokenMetrics = extractPnlTokenMetrics(performance, input.maxTokens);
         if (tokenMetrics.length >= 1) {
           const config = buildWalletPnlMetricChartConfig(input.wallet, tokenMetrics, "Token PnL");
-          const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+          const embed = await resolveChartEmbed(config, input.width, input.height, `${input.wallet} token pnl`);
           return ok({
             wallet: input.wallet,
             chartMode: "tokens",
             metrics: tokenMetrics,
-            chartUrlType,
-            chartUrl,
-            markdown: `![${input.wallet} token pnl](${chartUrl})`,
+            chartUrlType: embed.chartUrlType,
+            markdown: embed.markdown,
           });
         }
 
@@ -2297,14 +2316,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const config = buildWalletPortfolioVisualChartConfig(input.wallet, points);
-        const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+        const embed = await resolveChartEmbed(config, input.width, input.height, `${input.wallet} portfolio chart`);
         return ok({
           wallet: input.wallet,
           days: input.days ?? null,
           points: points.length,
-          chartUrlType,
-          chartUrl,
-          markdown: `![${input.wallet} portfolio chart](${chartUrl})`,
+          chartUrlType: embed.chartUrlType,
+          markdown: embed.markdown,
           latestValue: points[points.length - 1].value,
           summary: {
             total: portfolio.total,
@@ -2344,13 +2362,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const totalValue = slices.reduce((sum, slice) => sum + slice.value, 0);
         const config = buildWalletHoldingsChartConfig(input.wallet, slices);
-        const { chartUrl, chartUrlType } = await resolveChartUrl(config, input.width, input.height);
+        const embed = await resolveChartEmbed(
+          config,
+          input.width,
+          input.height,
+          `${input.wallet} holdings allocation`,
+        );
         return ok({
           wallet: input.wallet,
           top: input.top,
-          chartUrlType,
-          chartUrl,
-          markdown: `![${input.wallet} holdings allocation](${chartUrl})`,
+          chartUrlType: embed.chartUrlType,
+          markdown: embed.markdown,
           totalValue,
           totalValueCompact: formatCompactNumber(totalValue),
           slices: slices.map((slice) => ({
