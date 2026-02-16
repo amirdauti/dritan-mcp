@@ -1,3 +1,9 @@
+## [0.12.1](https://github.com/amirdauti/dritan-mcp/compare/v0.12.0...v0.12.1) (2026-02-16)
+
+### Bug Fixes
+
+* enforce markdown-only chart embeds in mcp responses ([7da5ea8](https://github.com/amirdauti/dritan-mcp/commit/7da5ea8288a7186c096431d72940f1e2d5fd5d6c))
+
 ## [0.12.0](https://github.com/amirdauti/dritan-mcp/compare/v0.11.0...v0.12.0) (2026-02-14)
 
 ### Features
